@@ -335,6 +335,29 @@ final class Bench {
             browser.select(tab)
             answer(describe(tab))
 
+        case "keep":
+            // A tab made a favorite or let go, as its menu would. Changing
+            // what is kept changes your row: only on a SEARCH_PROBE run.
+            guard Store.testing else { answer(["error": "keep only works on a --test run — it changes your tabs"]); return }
+            guard let tab = find(request, in: browser) else { answer(missing(request)); return }
+            switch request["as"] as? String ?? "" {
+            case "favorites": browser.pin(tab)
+            case "off": browser.unpin(tab)
+            default: answer(["error": "keep needs favorites or off"]); return
+            }
+            answer(describe(tab))
+
+        case "home":
+            // A kept tab's page: where it is, back to it, or this page as it.
+            guard Store.testing else { answer(["error": "home only works on a --test run — it changes your tabs"]); return }
+            guard let tab = find(request, in: browser) else { answer(missing(request)); return }
+            switch request["what"] as? String ?? "" {
+            case "go": browser.goHome(tab)
+            case "set": browser.setHome(tab)
+            default: break
+            }
+            answer(describe(tab))
+
         case "text":
             guard let tab = find(request, in: browser) else { answer(missing(request)); return }
             house(tab)
@@ -1444,6 +1467,11 @@ final class Bench {
             "noisy": tab.noisy,
             "muted": tab.muted,
             "extensions": { if #available(macOS 15.4, *) { return tab.carriesExtensions } else { return false } }(),
+            "pin": tab.pin ?? "",
+            "shelf": tab.pin == nil ? "" : tab.shelf.rawValue,
+            "home": tab.home?.absoluteString ?? "",
+            "away": tab.away,
+            "folder": tab.folder?.uuidString ?? "",
         ]
     }
 

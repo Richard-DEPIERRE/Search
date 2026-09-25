@@ -13,6 +13,7 @@ in [ROADMAP.md](ROADMAP.md).
 
 ### Added
 
+- Pinned tabs are favorites now, and each remembers the page it was pinned at. Wander off it and a dot shows under its square; ⌘W puts it down back at that page, and its menu has Back to Pinned Page and Set Pinned Page to This Page. A redirect on the way home still counts as home. The groundwork for pinned rows and folders, as in Arc.
 - Links from other apps can open in a small window of their own: the page, the site and Open in Search (⌘O), which moves it into your tabs as it is, after the pins and without loading it again. Escape or ⌘W closes it. Off unless you turn it on in Settings › General › Open links from other apps in a small window. The idea came from [@K-NRS](https://github.com/K-NRS) ([#227](https://github.com/driceroland/Search/pull/227)), after Arc's Little Arc.
 
 ### Fixed

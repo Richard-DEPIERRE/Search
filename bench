@@ -18,6 +18,8 @@
     ./bench submit ID SELECTOR         the form around SELECTOR
     ./bench shot ID [PATH] [WIDTH]     a PNG of the page → its path
     ./bench close ID | all             only tabs the bench opened
+    ./bench keep ID favorites|off      a tab made a favorite, or let go — --test runs only
+    ./bench home ID [go|set]           a kept tab's page: where it is, back to it, or this page as it — --test runs only
     ./bench probe                      the window's own state: panels, modal, windows
     ./bench extensions                 installed extensions, loaded or not, with their warnings
     ./bench little URL|keep|close      a small window for a link (made unseen), kept into the row, or closed
@@ -127,6 +129,13 @@ def main(argv):
     elif verb in ("text", "close", "sleep", "select"):
         if len(args) != 1: sys.exit(f"usage: bench {verb} ID")
         request["id"] = args[0]
+    elif verb == "keep":
+        if len(args) != 2 or args[1] not in ("favorites", "off"): sys.exit("usage: bench keep ID favorites|off")
+        request["id"], request["as"] = args
+    elif verb == "home":
+        if len(args) not in (1, 2) or (len(args) == 2 and args[1] not in ("go", "set")): sys.exit("usage: bench home ID [go|set]")
+        request["id"] = args[0]
+        if len(args) == 2: request["what"] = args[1]
     elif verb == "eval":
         if len(args) not in (2, 3) or (len(args) == 3 and args[2] != "search"): sys.exit("usage: bench eval ID JS [search]")
         request["id"], request["js"] = args[0], args[1]
@@ -289,7 +298,9 @@ def main(argv):
         for tab in answer.get("tabs", []):
             mark = "⚗" if tab.get("bench") else ("●" if tab.get("active") else " ")
             state = " …" if tab.get("loading") else (" z" if tab.get("asleep") else "")
-            print(f"{mark} {tab['id']}  {tab.get('title') or '—'}  {tab.get('url')}{state}")
+            kept = {"favorites": "FAV ", "pins": "PIN "}.get(tab.get("shelf"), "")
+            away = " (away from " + tab.get("home") + ")" if tab.get("away") else ""
+            print(f"{mark} {tab['id']}  {kept}{tab.get('title') or '—'}  {tab.get('url')}{state}{away}")
     else:
         print(json.dumps(answer, ensure_ascii=False, indent=2))
     return 0
