@@ -970,18 +970,27 @@ struct KeptTabCommands: View {
 
     var body: some View {
         if tab.pin == nil {
-            Button("Add to Favorites") { browser.pin(tab) }
+            Button("Add to Favorites") { browser.keep(tab, on: .favorites) }
                 .disabled(tab.isBlank)
-        } else {
+            Button("Pin") { browser.keep(tab, on: .pins) }
+                .disabled(tab.isBlank)
+        } else if tab.shelf == .favorites {
             Button("Change Letter") { browser.editLetter(tab) }
+            Button("Move to Pins") { browser.keep(tab, on: .pins) }
             Button("Remove from Favorites") { browser.unpin(tab) }
+        } else {
+            Button("Move to Favorites") { browser.keep(tab, on: .favorites) }
+            Button("Unpin") { browser.unpin(tab) }
+        }
+        if tab.pin != nil {
             Button("Back to Pinned Page") { browser.goHome(tab) }
                 .disabled(!tab.away)
             // Offered away from home, and also to a kept tab with no home
-            // at all — one an extension pinned blank — which could never
-            // get one otherwise.
+            // at all — one an extension pinned blank — which could never get
+            // one otherwise. Never on a page that can't be a home (about:blank,
+            // an extension's page): setHome would ignore it.
             Button("Set Pinned Page to This Page") { browser.setHome(tab) }
-                .disabled(tab.address == nil || (tab.home != nil && !tab.away))
+                .disabled(!Shelves.canBeHome(tab.address) || (tab.home != nil && !tab.away))
         }
     }
 }

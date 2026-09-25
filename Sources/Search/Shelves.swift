@@ -107,8 +107,10 @@ enum Shelves {
     }
 
     /// Whether a page is somewhere a kept tab can go back to. about:blank,
-    /// or an extension's own page, is not: ⌘W would put the tab down there,
-    /// the session saves only real pages, and the tab would be gone.
+    /// or an extension's own page, is not: ⌘W would put the tab down there
+    /// and the session, which saves only web pages, would lose it. A file
+    /// on this Mac can be a home for as long as the app is open; like any
+    /// file tab, it isn't brought back at the next launch.
     static func canBeHome(_ url: URL?) -> Bool {
         guard let scheme = url?.scheme?.lowercased() else { return false }
         return scheme == "http" || scheme == "https" || scheme == "file"
@@ -123,5 +125,10 @@ enum Shelves {
     static func savedAddress(address: URL, home: URL?, kept: Bool, asleep: Bool, away: Bool) -> URL {
         guard kept, !asleep, !away, let home else { return address }
         return home
+    }
+
+    /// How many tabs of the row are in one section.
+    static func count(_ slots: [Slot], of wanted: Section) -> Int {
+        slots.filter { section(of: $0) == wanted }.count
     }
 }

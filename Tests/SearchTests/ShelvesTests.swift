@@ -146,3 +146,54 @@ private let play = Folder(id: UUID(uuidString: "F0000000-0000-0000-0000-00000000
         #expect(!Shelves.canBeHome(URL(string: "chrome-extension://abcdefghijklmnop/popup.html")))
     }
 }
+
+@Suite struct CountTests {
+    let row = [slot(1, kept: true), slot(2, kept: true, .pins), slot(3, kept: true, .pins), slot(4)]
+
+    @Test func eachShelfCountsItsOwn() {
+        #expect(Shelves.count(row, of: .favorites) == 1)
+        #expect(Shelves.count(row, of: .pins) == 2)
+        #expect(Shelves.count(row, of: .loose) == 1)
+    }
+
+    @Test func anEmptyRowHasNone() {
+        #expect(Shelves.count([], of: .pins) == 0)
+    }
+}
+
+@Suite struct ShelfMoveTests {
+    // What Browser.keep(_:on:) relies on: it changes a tab's shelf and
+    // tidies, and tidying is stable — so where a moved tab lands follows from
+    // where it stood.
+
+    @Test func aFavoriteMovedToPinsBecomesTheFirstPin() {
+        var row = [slot(1, kept: true), slot(2, kept: true), slot(3, kept: true, .pins), slot(4)]
+        row[1].shelf = .pins
+        let (out, _) = Shelves.tidy(row, folders: [])
+        #expect(out.map(\.id) == [row[0].id, row[1].id, row[2].id, row[3].id])
+        #expect(Shelves.section(of: out[1]) == .pins)
+    }
+
+    @Test func aPinMovedToFavoritesBecomesTheLastFavorite() {
+        var row = [slot(1, kept: true), slot(2, kept: true, .pins), slot(3, kept: true, .pins), slot(4)]
+        row[2].shelf = .favorites
+        let (out, _) = Shelves.tidy(row, folders: [])
+        #expect(out.map(\.id) == [row[0].id, row[2].id, row[1].id, row[3].id])
+    }
+
+    @Test func aTabPinnedGoesToTheEndOfThePins() {
+        var row = [slot(1, kept: true), slot(2, kept: true, .pins), slot(3), slot(4)]
+        row[3].kept = true
+        row[3].shelf = .pins
+        let (out, _) = Shelves.tidy(row, folders: [])
+        #expect(out.map(\.id) == [row[0].id, row[1].id, row[3].id, row[2].id])
+    }
+
+    @Test func aPinMovedToFavoritesLeavesItsFolder() {
+        var row = [slot(1, kept: true, .pins, folder: work.id), slot(2, kept: true, .pins, folder: work.id)]
+        row[0].shelf = .favorites
+        let (out, folders) = Shelves.tidy(row, folders: [work])
+        #expect(out[0].folder == nil)
+        #expect(folders == [work])
+    }
+}

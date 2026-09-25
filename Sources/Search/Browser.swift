@@ -527,6 +527,10 @@ final class Browser: NSObject, ObservableObject {
 
     var pinnedCount: Int { tabs.filter { $0.pin != nil }.count }
 
+    /// The cards at the top of the column, and the rows under them.
+    var favoriteCount: Int { Shelves.count(slots, of: .favorites) }
+    var pinCount: Int { Shelves.count(slots, of: .pins) }
+
     /// This space's folders of pins (see Shelves.swift). Saved with its tabs,
     /// and parked with them while another space is on screen.
     @Published var folders: [Folder] = []
@@ -559,19 +563,29 @@ final class Browser: NSObject, ObservableObject {
         if kept != folders { folders = kept }
     }
 
-    func pin(_ tab: Tab) {
+    /// A tab made a favorite or a pin, or a kept one moved from one shelf to
+    /// the other. Everything that keeps a tab comes through here: the menus,
+    /// an extension pinning one (a favorite, as a pinned tab has always been),
+    /// the bench.
+    func keep(_ tab: Tab, on shelf: Shelf) {
         if tab.pin == nil {
             tab.pin = tab.monogram
-            tab.shelf = .favorites
+            tab.shelf = shelf
             // The page it is on is the page it goes back to — when it is on a
             // page. An extension can pin a tab still at about:blank; that
             // one takes its first real page as home instead (Tab's `\.url`).
             tab.remember(home: Shelves.canBeHome(tab.address) ? tab.address : nil)
-            // Favorites live at the head of the row, in the order they were
-            // added, so their letters never move under your hand: tidying
-            // leaves the others where they are and puts this one after them.
-            tidyTabs()
+        } else if tab.shelf != shelf {
+            if editingPin == tab.id { editingPin = nil }
+            tab.shelf = shelf
+            // Folders hold pins only.
+            tab.folder = nil
         }
+        // Tidying leaves every other tab where it is: one newly kept goes to
+        // the end of its shelf, a favorite moved down becomes the first pin,
+        // a pin moved up the last favorite — the places nearest where each
+        // already stood.
+        tidyTabs()
         // No dialog and no waiting cursor: the letter is taken from the
         // address and applied. Changing it is a separate act, for the day it
         // matters — which is why it is not folded into this one.

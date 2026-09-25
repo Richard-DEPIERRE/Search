@@ -341,7 +341,7 @@ final class Bench {
             guard Store.testing else { answer(["error": "keep only works on a --test run — it changes your tabs"]); return }
             guard let tab = find(request, in: browser) else { answer(missing(request)); return }
             switch request["as"] as? String ?? "" {
-            case "favorites": browser.pin(tab)
+            case "favorites": browser.keep(tab, on: .favorites)
             case "off": browser.unpin(tab)
             default: answer(["error": "keep needs favorites or off"]); return
             }
