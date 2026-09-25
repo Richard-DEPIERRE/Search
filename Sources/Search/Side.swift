@@ -34,6 +34,8 @@ struct SideBar: View {
     private static let pinGap: CGFloat = 4
     /// The line between the pins and the day's tabs, with its air.
     private static let divider: CGFloat = 13
+    /// How far a folder's pins sit in from the folder's own row.
+    private static let indent: CGFloat = 14
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -245,9 +247,20 @@ struct SideBar: View {
                 .padding(.bottom, 10)
             }
             if !pinsAsRows.isEmpty {
+                let drawn = Shelves.pinnedRows(Browser.slots(of: pinsAsRows), folders: row.folders, active: row.active)
                 VStack(spacing: SideBar.gap) {
-                    ForEach(pinsAsRows) { tab in
-                        SideRow(browser: browser, prefs: prefs, tab: tab, live: tab.id == row.active, pill: pill, close: {})
+                    ForEach(drawn) { line in
+                        switch line {
+                        case .folder(let id):
+                            if let folder = row.folders.first(where: { $0.id == id }) {
+                                FolderRow(browser: browser, folder: folder)
+                            }
+                        case .pin(let id, let folder):
+                            if let tab = pinsAsRows.first(where: { $0.id == id }) {
+                                SideRow(browser: browser, prefs: prefs, tab: tab, live: tab.id == row.active, pill: pill, close: {})
+                                    .padding(.leading, folder == nil ? 0 : SideBar.indent)
+                            }
+                        }
                     }
                 }
                 divider
@@ -432,24 +445,39 @@ struct SideBar: View {
     }
 
     /// The pins: rows under the cards, for the pages kept all day that want
-    /// their titles rather than a letter. Carried within the pins only;
-    /// `move` keeps them there.
+    /// their titles rather than a letter, and the folders that hold some of
+    /// them — each folder's row, then its pins, indented, while it is open.
+    /// A pin and a folder are carried the same way, through the rows as
+    /// drawn; where one is let go decides its folder (see Shelves.movePin).
     private var pinRows: some View {
-        VStack(spacing: SideBar.gap) {
-            ForEach(Array(pinTabs.enumerated()), id: \.element.id) { index, tab in
-                SideRow(
-                    browser: browser,
-                    prefs: prefs,
-                    tab: tab,
-                    live: tab.id == browser.activeID,
-                    pill: pill,
-                    close: { browser.close(tab) }
-                )
-                // Positions here are among the pins; the favorites sit in
-                // front of them in the real list.
-                .modifier(Carried(index: index, count: pinTabs.count, step: SideBar.row + SideBar.gap, vertical: true, space: "pinRows") {
-                    browser.move(tab, to: $0 + browser.favoriteCount)
-                })
+        let rows = browser.pinnedRows
+        let step = SideBar.row + SideBar.gap
+        return VStack(spacing: SideBar.gap) {
+            ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                switch row {
+                case .folder(let id):
+                    if let folder = browser.folders.first(where: { $0.id == id }) {
+                        FolderRow(browser: browser, folder: folder)
+                            .modifier(Carried(index: index, count: rows.count, step: step, vertical: true, space: "pinRows") {
+                                browser.moveFolderRow(id, to: $0)
+                            })
+                    }
+                case .pin(let id, let folder):
+                    if let tab = browser.tabs.first(where: { $0.id == id }) {
+                        SideRow(
+                            browser: browser,
+                            prefs: prefs,
+                            tab: tab,
+                            live: tab.id == browser.activeID,
+                            pill: pill,
+                            close: { browser.close(tab) }
+                        )
+                        .padding(.leading, folder == nil ? 0 : SideBar.indent)
+                        .modifier(Carried(index: index, count: rows.count, step: step, vertical: true, space: "pinRows") {
+                            browser.movePinRow(tab, to: $0)
+                        })
+                    }
+                }
             }
         }
         .coordinateSpace(name: "pinRows")
@@ -464,12 +492,13 @@ struct SideBar: View {
             .frame(height: SideBar.divider)
     }
 
-    /// Not drawn on its own — `rowsEnd` adds this up from the same
+    /// The pinned rows as drawn (folder rows and the pins on show) and their
+    /// divider — not drawn on its own; `rowsEnd` adds this up from the same
     /// constants the pins and the divider are actually drawn with, so a
     /// change to one of those has to be made in the other too.
     private var pinBlock: CGFloat {
-        let pins = CGFloat(browser.pinCount)
-        return pins == 0 ? 0 : pins * (SideBar.row + SideBar.gap) - SideBar.gap + SideBar.divider
+        let rows = CGFloat(browser.pinnedRows.count)
+        return rows == 0 ? 0 : rows * (SideBar.row + SideBar.gap) - SideBar.gap + SideBar.divider
     }
 
     /// The pins and their line, then the loose tabs and the row that makes
@@ -887,5 +916,130 @@ struct Door: View {
         .help(help)
         .animation(Motion.quick, value: hovering)
         .animation(Motion.quick, value: on)
+    }
+}
+
+/// A folder among the pins, as a line in the column. A click opens or closes
+/// it, a double-click renames it; the single click waits the moment a double
+/// one takes to rule itself out.
+private struct FolderRow: View {
+    @ObservedObject var browser: Browser
+    let folder: Folder
+
+    @State private var hovering = false
+
+    private var editing: Bool { browser.editingFolder == folder.id }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "chevron.right")
+                .font(.system(size: 8, weight: .semibold))
+                .rotationEffect(.degrees(folder.open ? 90 : 0))
+                .frame(width: 10)
+            Image(systemName: "folder")
+                .font(.system(size: 11))
+            if editing {
+                FolderField(browser: browser, folder: folder)
+                    .frame(height: 16)
+            } else {
+                Text(folder.name)
+                    .font(.system(size: 12.5))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(hovering || editing ? Palette.ink.opacity(0.7) : Palette.muted)
+        .padding(.horizontal, 10)
+        .frame(height: 28)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            if hovering {
+                RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Palette.hover)
+            }
+        }
+        .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .gesture(
+            TapGesture(count: 2)
+                .onEnded { browser.beginFolderRename(folder.id) }
+                .exclusively(before: TapGesture().onEnded {
+                    withAnimation(Motion.settle) { browser.toggleFolder(folder.id) }
+                })
+        )
+        .onHover { hovering = $0 }
+        .contextMenu {
+            Button("Rename Folder") { browser.beginFolderRename(folder.id) }
+            Button("Delete Folder") { browser.deleteFolder(folder.id) }
+        }
+        .animation(Motion.quick, value: hovering)
+        .animation(Motion.quick, value: folder.open)
+    }
+}
+
+/// A folder's name, typed over in place. It arrives selected, so a keystroke
+/// replaces it. Return, Tab or a click elsewhere keeps what was typed; Escape
+/// keeps the old name.
+private struct FolderField: NSViewRepresentable {
+    @ObservedObject var browser: Browser
+    let folder: Folder
+
+    func makeCoordinator() -> Coordinator { Coordinator(browser: browser, id: folder.id) }
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField()
+        field.delegate = context.coordinator
+        field.isBordered = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.font = .systemFont(ofSize: 12.5)
+        field.textColor = Palette.NS.ink
+        field.cell?.usesSingleLineMode = true
+        field.cell?.wraps = false
+        field.cell?.isScrollable = true
+        field.stringValue = folder.name
+        return field
+    }
+
+    func updateNSView(_ field: NSTextField, context: Context) {
+        let coordinator = context.coordinator
+        coordinator.browser = browser
+        guard !coordinator.claimed else { return }
+        coordinator.claimed = true
+        DispatchQueue.main.async {
+            field.window?.makeFirstResponder(field)
+            field.currentEditor()?.selectAll(nil)
+        }
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var browser: Browser
+        let id: UUID
+        var claimed = false
+        var cancelled = false
+
+        init(browser: Browser, id: UUID) {
+            self.browser = browser
+            self.id = id
+        }
+
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy command: Selector) -> Bool {
+            switch command {
+            case #selector(NSResponder.insertNewline(_:)), #selector(NSResponder.insertTab(_:)):
+                control.window?.makeFirstResponder(nil)
+                return true
+            case #selector(NSResponder.cancelOperation(_:)):
+                cancelled = true
+                control.window?.makeFirstResponder(nil)
+                return true
+            default:
+                return false
+            }
+        }
+
+        func controlTextDidEndEditing(_ note: Notification) {
+            guard let field = note.object as? NSTextField else { return }
+            if !cancelled { browser.renameFolder(id, to: field.stringValue) }
+            browser.endFolderEdit()
+        }
     }
 }
