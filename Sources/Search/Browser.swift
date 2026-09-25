@@ -569,6 +569,11 @@ final class Browser: NSObject, ObservableObject {
     /// the bench.
     func keep(_ tab: Tab, on shelf: Shelf) {
         if tab.pin == nil {
+            // The column draws its rows from this object, not from the tab's
+            // own publisher, and a move that leaves the row's order alone —
+            // the first loose tab pinned, say — would otherwise tell nobody
+            // to redraw it.
+            objectWillChange.send()
             tab.pin = tab.monogram
             tab.shelf = shelf
             // The page it is on is the page it goes back to — when it is on a
@@ -576,7 +581,12 @@ final class Browser: NSObject, ObservableObject {
             // one takes its first real page as home instead (Tab's `\.url`).
             tab.remember(home: Shelves.canBeHome(tab.address) ? tab.address : nil)
         } else if tab.shelf != shelf {
+            // Same reasoning: moving a favorite to the pins or back can keep
+            // every tab's place in the row, and only this send tells the
+            // column to look again.
+            objectWillChange.send()
             if editingPin == tab.id { editingPin = nil }
+            if editingTab == tab.id { cancelTabEdit() }
             tab.shelf = shelf
             // Folders hold pins only.
             tab.folder = nil
@@ -615,6 +625,12 @@ final class Browser: NSObject, ObservableObject {
 
     func unpin(_ tab: Tab) {
         if editingPin == tab.id { editingPin = nil }
+        if tab.pin != nil {
+            // As in keep(_:on:): unpinning the last pin, or the first
+            // favorite, can leave the row's order untouched, and the column
+            // only redraws it if it is told.
+            objectWillChange.send()
+        }
         tab.pin = nil
         tab.shelf = .favorites
         tab.forgetHome()

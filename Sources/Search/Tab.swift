@@ -559,6 +559,11 @@ final class Tab: ObservableObject, Identifiable {
                     guard fresh.absoluteString != "about:blank" else { return }
                     let moved = fresh.host() != self.address?.host()
                     self.address = fresh
+                    // Provisional: WebKit updates `url` on a server redirect
+                    // before the commit, so between the two a trip home would
+                    // otherwise still read as away, and flash the ↩︎ and the
+                    // dot. `committed()` sets the final landing.
+                    if self.homing { self.landed = fresh }
                     // Kept before it had a page to keep — an extension pinned
                     // it blank: the first real page it reaches is its home.
                     if self.pin != nil, self.home == nil, Shelves.canBeHome(fresh) {
