@@ -89,3 +89,25 @@ enum Session {
         }
     }
 }
+
+extension Session.Shape {
+    /// Read leniently where a hand, or a write cut short, could have left
+    /// something odd: a folder that won't read is dropped, not the session
+    /// with every tab in it. Written the ordinary way.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        tabs = try container.decode([Session.Entry].self, forKey: .tabs)
+        active = try container.decode(Int.self, forKey: .active)
+        folders = (try? container.decodeIfPresent([Lossy<Folder>].self, forKey: .folders))?.compactMap(\.value)
+    }
+}
+
+/// One element of a list that might not read: nil in its place instead of an
+/// error for the whole list.
+private struct Lossy<Value: Decodable>: Decodable {
+    let value: Value?
+
+    init(from decoder: Decoder) throws {
+        value = try? Value(from: decoder)
+    }
+}

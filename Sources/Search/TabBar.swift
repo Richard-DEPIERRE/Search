@@ -192,7 +192,7 @@ struct TabBar: View {
         } else {
             let space = browser.spaces[index]
             let row = space.id == browser.spaceID
-                ? Parked(tabs: browser.tabs, active: browser.activeID)
+                ? Parked(tabs: browser.tabs, active: browser.activeID, folders: browser.folders)
                 : browser.parked[space.id] ?? Parked(tabs: [], active: nil)
             let each = width(in: strip, pinned: row.tabs.filter { $0.pin != nil }.count, count: row.tabs.count)
             HStack(spacing: Metrics.tabGap) {

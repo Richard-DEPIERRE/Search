@@ -538,7 +538,7 @@ final class Browser: NSObject, ObservableObject {
     /// The row as the shelf rules see it.
     private var slots: [Slot] { Browser.slots(of: tabs) }
 
-    private static func slots(of row: [Tab]) -> [Slot] {
+    static func slots(of row: [Tab]) -> [Slot] {
         row.map { Slot(id: $0.id, kept: $0.pin != nil, shelf: $0.shelf, folder: $0.folder) }
     }
 
@@ -604,7 +604,9 @@ final class Browser: NSObject, ObservableObject {
 
     /// Change Letter, or a double-click on the square itself.
     func editLetter(_ tab: Tab) {
-        guard tab.pin != nil else { return }
+        // A pin is a row with its title; only a favorite wears a letter. The
+        // top bar draws both as squares, and a double-click there is for this.
+        guard tab.pin != nil, tab.shelf == .favorites else { return }
         editingPin = tab.id
     }
 
@@ -1100,7 +1102,13 @@ final class Browser: NSObject, ObservableObject {
                     )
                 },
                 active: tabs.firstIndex { $0.id == activeID } ?? 0,
-                folders: folders.isEmpty ? nil : folders
+                // Only folders a pin is in: one emptied by a tab that left some
+                // way other than through tidying isn't written out.
+                folders: {
+                    let used = Set(tabs.compactMap { $0.pin != nil && $0.shelf == .pins ? $0.folder : nil })
+                    let kept = folders.filter { used.contains($0.id) }
+                    return kept.isEmpty ? nil : kept
+                }()
             )
         )
     }
@@ -2061,18 +2069,20 @@ extension Browser: WKNavigationDelegate, WKUIDelegate {
         // decided here because here is the last moment before it loads.
         if action.targetFrame?.isMainFrame ?? true, let tab = tab(for: webView) {
             // A navigation of yours — a link, Back, a form, a reload — begun
-            // before home arrived ends the trip. Redirects on the way home,
-            // and the trip's own load, come as .other.
-            if action.navigationType != .other { tab.tripInterrupted() }
+            // before home arrived ends the trip, but only if it replaces this
+            // page: not a new window, and not a link handed to another app.
+            // Redirects on the way home, and the trip's own load, come as
+            // .other.
+            if action.navigationType != .other, action.targetFrame != nil, Browser.pageSchemes.contains(scheme) {
+                tab.tripInterrupted()
+            }
             let host = curtain.host(of: url)
             tab.arm(hiding: curtain.css(on: host))
             // And the blocker, on or off for where it is going.
             Shield.shared.tune(webView.configuration.userContentController, for: host)
         }
 
-        // chrome-extension: an extension's own pages — options, a side
-        // panel, a tab it opened. WebKit serves them; nothing else here does.
-        if ["http", "https", "file", "about", "data", "blob", "chrome-extension", "webkit-extension"].contains(scheme) {
+        if Browser.pageSchemes.contains(scheme) {
             decisionHandler(.allow)
         } else {
             decisionHandler(.cancel)
@@ -2325,6 +2335,11 @@ extension Browser: WKNavigationDelegate, WKUIDelegate {
             return "The page didn't load."
         }
     }
+
+    /// What a page can load in place. chrome-extension: an extension's own
+    /// pages — options, a side panel, a tab it opened. WebKit serves them;
+    /// nothing else here does. Anything else is handed to another app.
+    static let pageSchemes = ["http", "https", "file", "about", "data", "blob", "chrome-extension", "webkit-extension"]
 
     func tab(for webView: WKWebView) -> Tab? {
         tabs.first { $0.built === webView }

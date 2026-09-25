@@ -58,4 +58,24 @@ import Testing
         #expect(back.folders == [folder])
         #expect(back.tabs[1].keptHome == nil)
     }
+
+    @Test func aFolderThatWontReadIsDroppedNotTheSession() throws {
+        let json = """
+        {"tabs":[{"url":"https://a.com/","title":"A","pin":"A","shelf":"pins","folder":"F0000000-0000-0000-0000-000000000001"}],
+         "active":0,
+         "folders":[{"id":"F0000000-0000-0000-0000-000000000001","name":"Work","open":true},{"name":"no id"}]}
+        """
+        let shape = try JSONDecoder().decode(Session.Shape.self, from: Data(json.utf8))
+        #expect(shape.tabs.count == 1)
+        #expect(shape.folders?.map(\.name) == ["Work"])
+    }
+
+    @Test func foldersThatAreNotAListAreDroppedNotTheSession() throws {
+        let json = """
+        {"tabs":[{"url":"https://a.com/","title":"A"}],"active":0,"folders":"nonsense"}
+        """
+        let shape = try JSONDecoder().decode(Session.Shape.self, from: Data(json.utf8))
+        #expect(shape.tabs.count == 1)
+        #expect(shape.folders == nil)
+    }
 }
