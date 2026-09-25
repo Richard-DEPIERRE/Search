@@ -20,6 +20,9 @@
     ./bench close ID | all             only tabs the bench opened
     ./bench keep ID favorites|pins|off a tab made a favorite or a pin, moved between them, or let go — --test runs only
     ./bench home ID [go|set]           a kept tab's page: where it is, back to it, or this page as it — --test runs only
+    ./bench folder new ID NAME | into ID NAME | out ID | toggle NAME | delete NAME | rename NAME NEW
+                 | drag ID INDEX | dragfolder NAME INDEX | rows
+                                       folders of pins, and the pinned rows as drawn — --test runs only
     ./bench probe                      the window's own state: panels, modal, windows
     ./bench extensions                 installed extensions, loaded or not, with their warnings
     ./bench little URL|keep|close      a small window for a link (made unseen), kept into the row, or closed
@@ -136,6 +139,18 @@ def main(argv):
         if len(args) not in (1, 2) or (len(args) == 2 and args[1] not in ("go", "set")): sys.exit("usage: bench home ID [go|set]")
         request["id"] = args[0]
         if len(args) == 2: request["what"] = args[1]
+    elif verb == "folder":
+        what, a = (args[0], args[1:]) if args else ("rows", [])
+        need = {"new": 2, "into": 2, "out": 1, "toggle": 1, "delete": 1, "rename": 2, "drag": 2, "dragfolder": 2, "rows": 0}
+        if what not in need or len(a) != need[what]:
+            sys.exit("usage: bench folder new ID NAME|into ID NAME|out ID|toggle NAME|delete NAME|rename NAME NEW|drag ID INDEX|dragfolder NAME INDEX|rows")
+        request["what"] = what
+        if what in ("new", "into"): request["id"], request["name"] = a
+        elif what == "out": request["id"] = a[0]
+        elif what in ("toggle", "delete"): request["name"] = a[0]
+        elif what == "rename": request["name"], request["to"] = a
+        elif what == "drag": request["id"], request["index"] = a[0], int(a[1])
+        elif what == "dragfolder": request["name"], request["index"] = a[0], int(a[1])
     elif verb == "eval":
         if len(args) not in (2, 3) or (len(args) == 3 and args[2] != "search"): sys.exit("usage: bench eval ID JS [search]")
         request["id"], request["js"] = args[0], args[1]
@@ -294,6 +309,9 @@ def main(argv):
     elif verb in ("eval", "ext-popup"):
         value = answer.get("value")
         print(value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, indent=2))
+    elif verb == "folder":
+        for row in answer.get("rows", []):
+            print(row)
     elif verb == "tabs":
         for tab in answer.get("tabs", []):
             mark = "⚗" if tab.get("bench") else ("●" if tab.get("active") else " ")

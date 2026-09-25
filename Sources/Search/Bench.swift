@@ -359,6 +359,56 @@ final class Bench {
             }
             answer(describe(tab))
 
+        case "folder":
+            // Folders of pins made, filled, moved and dropped, as their menus
+            // and drags would. They change your row: only on a SEARCH_PROBE run.
+            guard Store.testing else { answer(["error": "folder only works on a --test run — it changes your tabs"]); return }
+            let named = browser.folders.first { $0.name == request["name"] as? String }
+            switch request["what"] as? String ?? "rows" {
+            case "new":
+                guard let tab = find(request, in: browser) else { answer(missing(request)); return }
+                browser.newFolder(with: tab)
+                if let id = browser.editingFolder {
+                    browser.renameFolder(id, to: request["name"] as? String ?? "Folder")
+                    browser.endFolderEdit()
+                }
+            case "into":
+                guard let tab = find(request, in: browser) else { answer(missing(request)); return }
+                guard let named else { answer(["error": "no folder called that"]); return }
+                browser.putInFolder(tab, named.id)
+            case "out":
+                guard let tab = find(request, in: browser) else { answer(missing(request)); return }
+                browser.putInFolder(tab, nil)
+            case "toggle", "delete", "rename", "dragfolder":
+                guard let named else { answer(["error": "no folder called that"]); return }
+                switch request["what"] as? String {
+                case "toggle": browser.toggleFolder(named.id)
+                case "delete": browser.deleteFolder(named.id)
+                case "rename":
+                    browser.beginFolderRename(named.id)
+                    browser.renameFolder(named.id, to: request["to"] as? String ?? "")
+                    browser.endFolderEdit()
+                default: browser.moveFolderRow(named.id, to: request["index"] as? Int ?? 0)
+                }
+            case "drag":
+                guard let tab = find(request, in: browser) else { answer(missing(request)); return }
+                browser.movePinRow(tab, to: request["index"] as? Int ?? 0)
+            case "rows":
+                break
+            default:
+                answer(["error": "folder needs new, into, out, toggle, delete, rename, drag, dragfolder or rows"]); return
+            }
+            answer(["rows": browser.pinnedRows.map { row -> String in
+                switch row {
+                case .folder(let id):
+                    let folder = browser.folders.first { $0.id == id }
+                    return "FOLDER \(folder?.name ?? "?")" + (folder?.open == false ? " (closed)" : "")
+                case .pin(let id, let folder):
+                    let tab = browser.tabs.first { $0.id == id }
+                    return (folder == nil ? "" : "  ") + "PIN \(tab.map(Bench.short) ?? "?") \(tab?.address?.path ?? "")"
+                }
+            }])
+
         case "text":
             guard let tab = find(request, in: browser) else { answer(missing(request)); return }
             house(tab)
@@ -1326,7 +1376,7 @@ final class Bench {
 
         default:
             answer(["error": "unknown command “\(verb)”", "commands": [
-                "tabs", "open", "go", "close", "wait", "sleep", "select", "keep", "home", "text", "eval", "click", "type", "submit", "shot", "probe", "key", "resize", "hit", "film", "window", "pages", "picture", "place", "field", "bookmark", "menu", "keyeq", "pull", "space", "strip", "column", "fold", "consent", "site", "little", "ui",
+                "tabs", "open", "go", "close", "wait", "sleep", "select", "keep", "home", "folder", "text", "eval", "click", "type", "submit", "shot", "probe", "key", "resize", "hit", "film", "window", "pages", "picture", "place", "field", "bookmark", "menu", "keyeq", "pull", "space", "strip", "column", "fold", "consent", "site", "little", "ui",
             ]])
         }
     }
