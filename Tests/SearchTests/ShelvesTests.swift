@@ -132,3 +132,17 @@ private let play = Folder(id: UUID(uuidString: "F0000000-0000-0000-0000-00000000
         #expect(Shelves.savedAddress(address: landed, home: nil, kept: true, asleep: false, away: false) == landed)
     }
 }
+
+@Suite struct CanBeHomeTests {
+    @Test func aWebPageOrAFileCanBeHome() {
+        #expect(Shelves.canBeHome(URL(string: "http://a.com/")))
+        #expect(Shelves.canBeHome(URL(string: "https://a.com/x")))
+        #expect(Shelves.canBeHome(URL(string: "file:///Users/me/notes.html")))
+    }
+
+    @Test func aBlankPageNothingOrAnExtensionsPageCannot() {
+        #expect(!Shelves.canBeHome(URL(string: "about:blank")))
+        #expect(!Shelves.canBeHome(nil))
+        #expect(!Shelves.canBeHome(URL(string: "chrome-extension://abcdefghijklmnop/popup.html")))
+    }
+}

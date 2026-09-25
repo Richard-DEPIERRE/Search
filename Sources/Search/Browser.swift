@@ -563,8 +563,10 @@ final class Browser: NSObject, ObservableObject {
         if tab.pin == nil {
             tab.pin = tab.monogram
             tab.shelf = .favorites
-            // The page it is on is the page it goes back to.
-            tab.remember(home: tab.address)
+            // The page it is on is the page it goes back to — when it is on a
+            // page. An extension can pin a tab still at about:blank; that
+            // one takes its first real page as home instead (Tab's `\.url`).
+            tab.remember(home: Shelves.canBeHome(tab.address) ? tab.address : nil)
             // Favorites live at the head of the row, in the order they were
             // added, so their letters never move under your hand: tidying
             // leaves the others where they are and puts this one after them.
@@ -618,7 +620,7 @@ final class Browser: NSObject, ObservableObject {
 
     /// The page it is on becomes the page it goes back to.
     func setHome(_ tab: Tab) {
-        guard tab.pin != nil, let url = tab.address else { return }
+        guard tab.pin != nil, let url = tab.address, Shelves.canBeHome(url) else { return }
         tab.remember(home: url)
         writeSession(now: true)
     }

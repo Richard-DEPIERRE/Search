@@ -106,6 +106,14 @@ enum Shelves {
         return false
     }
 
+    /// Whether a page is somewhere a kept tab can go back to. about:blank,
+    /// or an extension's own page, is not: ⌘W would put the tab down there,
+    /// the session saves only real pages, and the tab would be gone.
+    static func canBeHome(_ url: URL?) -> Bool {
+        guard let scheme = url?.scheme?.lowercased() else { return false }
+        return scheme == "http" || scheme == "https" || scheme == "file"
+    }
+
     /// Where the session saves a tab. A kept tab that is awake on its own
     /// page is saved at its home, not at wherever the trip home landed: the
     /// landing isn't saved, so a relaunch would find it on a page that is

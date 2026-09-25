@@ -535,6 +535,11 @@ final class Tab: ObservableObject, Identifiable {
                     let moved = fresh.host() != self.address?.host()
                     self.address = fresh
                     if self.homing { self.landed = fresh }
+                    // Kept before it had a page to keep — an extension pinned
+                    // it blank: the first real page it reaches is its home.
+                    if self.pin != nil, self.home == nil, Shelves.canBeHome(fresh) {
+                        self.remember(home: fresh)
+                    }
                     if moved { self.adoptIcon() }
                 }
             },
