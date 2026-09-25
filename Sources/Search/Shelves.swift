@@ -209,8 +209,8 @@ enum Shelves {
     }
 
     /// A folder's row carried to `target` among the drawn rows, its pins with
-    /// it. It never lands inside another folder: carried down it goes past
-    /// the other folder's pins, carried up it goes before that folder's row.
+    /// it. It never lands inside another folder, going before it while the
+    /// hand is in that folder's first half and after it past the half.
     static func moveFolder(_ id: UUID, to target: Int, pins: [Slot], folders: [Folder], active: UUID?) -> [Slot] {
         let rows = pinnedRows(pins, folders: folders, active: active)
         guard let from = rows.firstIndex(of: .folder(id)), rows.indices.contains(target), target != from else {
@@ -222,12 +222,15 @@ enum Shelves {
         var rest = rows
         rest.removeSubrange(from..<end)
         var at = min(max(0, target), rest.count)
-        if at < rest.count, case .pin(_, let other?) = rest[at] {
-            if target > from {
-                while at < rest.count, case .pin(_, let folder) = rest[at], folder == other { at += 1 }
-            } else if let row = rest.firstIndex(of: .folder(other)) {
-                at = row
-            }
+        // Inside another folder's block, where the hand is decides: in its
+        // first half the carried folder goes before it, past the half after
+        // it. `at` is counted without the carried block, so the answer
+        // doesn't depend on where the folder is now — it can't flip back and
+        // forth while the hand holds still, or once per row as it passes.
+        if at < rest.count, case .pin(_, let other?) = rest[at], let start = rest.firstIndex(of: .folder(other)) {
+            var end = start + 1
+            while end < rest.count, case .pin(_, let folder) = rest[end], folder == other { end += 1 }
+            at = (at - start) * 2 <= end - start ? start : end
         }
         rest.insert(contentsOf: block, at: at)
         return expand(rest, pins: pins, folders: folders, moved: nil, into: nil)

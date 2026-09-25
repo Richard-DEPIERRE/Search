@@ -601,6 +601,9 @@ struct Carried: ViewModifier {
     /// folder does beside another folder, and asking again every event
     /// would bounce it.
     @State private var asked: Int?
+    /// The number of rows when `asked` was asked for, because a move that
+    /// adds or drops a row changes what that number means.
+    @State private var askedCount = 0
 
     func body(content: Content) -> some View {
         // What it has travelled, less the ground its new place has already
@@ -623,11 +626,13 @@ struct Carried: ViewModifier {
                             held = true
                             from = index
                             asked = index
+                            askedCount = count
                         }
                         travel = vertical ? value.translation.height : value.translation.width
                         let target = min(max(0, from + Int((travel / step).rounded())), count - 1)
-                        if target != asked {
+                        if target != asked || count != askedCount {
                             asked = target
+                            askedCount = count
                             withAnimation(Motion.settle) { move(target) }
                         }
                     }

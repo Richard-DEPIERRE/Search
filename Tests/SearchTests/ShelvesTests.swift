@@ -310,9 +310,14 @@ private func folder(of n: Int, in pins: [Slot]) -> UUID? { pins.first { $0.id ==
         #expect(numbers(out) == [1, 2, 4, 5, 3, 6])
     }
 
-    @Test func movedUpIntoAnotherFolderItLandsBeforeIt() {
-        let out = Shelves.moveFolder(play.id, to: 2, pins: pinsFixture, folders: bothFolders, active: nil)
+    @Test func inTheFirstHalfOfAnotherFolderItLandsBeforeIt() {
+        let out = Shelves.moveFolder(play.id, to: 1, pins: pinsFixture, folders: bothFolders, active: nil)
         #expect(numbers(out) == [4, 5, 1, 2, 3, 6])
+    }
+
+    @Test func pastTheHalfOfAnotherFolderItLandsAfterIt() {
+        let out = Shelves.moveFolder(play.id, to: 2, pins: pinsFixture, folders: bothFolders, active: nil)
+        #expect(numbers(out) == [1, 2, 4, 5, 3, 6])
     }
 
     @Test func anOpenFolderMovedDownPassesOneRow() {
@@ -333,8 +338,35 @@ private func folder(of n: Int, in pins: [Slot]) -> UUID? { pins.first { $0.id ==
             slot(3, kept: true, .pins, folder: work.id),
             slot(4, kept: true, .pins, folder: work.id),
         ]
-        let out = Shelves.moveFolder(side.id, to: 2, pins: pins, folders: [side, work], active: nil)
+        let out = Shelves.moveFolder(side.id, to: 3, pins: pins, folders: [side, work], active: nil)
         #expect(numbers(out) == [2, 3, 4, 1])
+    }
+
+    @Test func carriedDownIntoTheFirstHalfOfAnotherFolderItLandsBeforeIt() {
+        let pins = [
+            slot(1, kept: true, .pins, folder: side.id),
+            slot(2, kept: true, .pins),
+            slot(3, kept: true, .pins, folder: work.id),
+            slot(4, kept: true, .pins, folder: work.id),
+        ]
+        let out = Shelves.moveFolder(side.id, to: 2, pins: pins, folders: [side, work], active: nil)
+        #expect(numbers(out) == [2, 1, 3, 4])
+    }
+
+    @Test func theSameHandTwiceLeavesItWhereItLanded() {
+        // Rows: 0 Side, 1 p1, 2 p2, 3 Work, 4 p3, 5 p4, 6 p5.
+        let pins = [
+            slot(1, kept: true, .pins, folder: side.id),
+            slot(2, kept: true, .pins, folder: side.id),
+            slot(3, kept: true, .pins, folder: work.id),
+            slot(4, kept: true, .pins, folder: work.id),
+            slot(5, kept: true, .pins),
+        ]
+        let folders = [side, work]
+        let once = Shelves.moveFolder(side.id, to: 2, pins: pins, folders: folders, active: nil)
+        let twice = Shelves.moveFolder(side.id, to: 2, pins: once, folders: folders, active: nil)
+        #expect(numbers(once) == [3, 4, 1, 2, 5])
+        #expect(numbers(twice) == numbers(once))
     }
 }
 
