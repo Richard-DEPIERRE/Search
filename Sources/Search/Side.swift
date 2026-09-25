@@ -32,6 +32,8 @@ struct SideBar: View {
     private static let gap: CGFloat = 2
     private static let square: CGFloat = 34
     private static let pinGap: CGFloat = 4
+    /// The line between the pins and the day's tabs, with its air.
+    private static let divider: CGFloat = 13
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -175,7 +177,7 @@ struct SideBar: View {
                 .frame(maxHeight: .infinity)
             } else if browser.spaces[index].id == browser.spaceID {
                 VStack(alignment: .leading, spacing: 0) {
-                    if browser.pinnedCount > 0 {
+                    if browser.favoriteCount > 0 {
                         pinned
                             .padding(.bottom, 10)
                     }
@@ -223,7 +225,8 @@ struct SideBar: View {
     /// two read as one column while they pass — and nothing to press until
     /// it is the one on screen.
     private func preview(_ row: Parked, pill: Namespace.ID) -> some View {
-        let pins = row.tabs.filter { $0.pin != nil }
+        let pins = row.tabs.filter { $0.pin != nil && $0.shelf == .favorites }
+        let pinsAsRows = row.tabs.filter { $0.pin != nil && $0.shelf == .pins }
         let rest = row.tabs.filter { $0.pin == nil }
         let cols = SideBar.pinColumns(pins.count)
         let width = pinWidth(for: pins.count)
@@ -240,6 +243,14 @@ struct SideBar: View {
                 }
                 .padding(.bottom, 10)
             }
+            if !pinsAsRows.isEmpty {
+                VStack(spacing: SideBar.gap) {
+                    ForEach(pinsAsRows) { tab in
+                        SideRow(browser: browser, prefs: prefs, tab: tab, live: tab.id == row.active, pill: pill, close: {})
+                    }
+                }
+                divider
+            }
             VStack(spacing: SideBar.gap) {
                 ForEach(rest) { tab in
                     SideRow(browser: browser, prefs: prefs, tab: tab, live: tab.id == row.active, pill: pill, close: {})
@@ -254,18 +265,19 @@ struct SideBar: View {
     /// from what was drawn rather than measured: a measurement would arrive a
     /// frame late, and for one frame the whole column would drag the window.
     private var rowsEnd: CGFloat {
-        let pins = browser.pinnedCount
-        let cols = SideBar.pinColumns(pins)
-        let pinRows = pins == 0 ? 0 : (pins + cols - 1) / cols
-        let pinBlock = pinRows == 0 ? 0
-            : CGFloat(pinRows) * pinHeight + CGFloat(pinRows - 1) * SideBar.pinGap + 10
-        let loose = CGFloat(browser.tabs.count - pins) * (SideBar.row + SideBar.gap)
-        return Metrics.strip + pinBlock + loose + SideBar.row + 8
+        let favorites = browser.favoriteCount
+        let cols = SideBar.pinColumns(favorites)
+        let gridRows = favorites == 0 ? 0 : (favorites + cols - 1) / cols
+        let grid = gridRows == 0 ? 0
+            : CGFloat(gridRows) * pinHeight + CGFloat(gridRows - 1) * SideBar.pinGap + 10
+        let loose = CGFloat(browser.tabs.count - browser.pinnedCount) * (SideBar.row + SideBar.gap)
+        return Metrics.strip + grid + pinBlock + loose + SideBar.row + 8
     }
 
     // MARK: - the pinned squares
 
-    private var pinnedTabs: [Tab] { browser.tabs.filter { $0.pin != nil } }
+    private var favoriteTabs: [Tab] { browser.tabs.filter { $0.pin != nil && $0.shelf == .favorites } }
+    private var pinTabs: [Tab] { browser.tabs.filter { $0.pin != nil && $0.shelf == .pins } }
     private var looseTabs: [Tab] { browser.tabs.filter { $0.pin == nil } }
 
     /// Three columns is the block's own shape — up to six pins, that's two
@@ -281,7 +293,7 @@ struct SideBar: View {
     /// width between them — the row is what fills edge to edge, not each
     /// cell on its own, so this grows past 34 just as readily as it shrinks
     /// below it.
-    private var pinWidth: CGFloat { pinWidth(for: browser.pinnedCount) }
+    private var pinWidth: CGFloat { pinWidth(for: browser.favoriteCount) }
 
     private func pinWidth(for count: Int) -> CGFloat {
         let cols = SideBar.pinColumns(count)
@@ -302,7 +314,7 @@ struct SideBar: View {
     /// The grid itself: fixed-size cells, left-aligned, so a half-empty last
     /// row holds its ground rather than stretching to fill it.
     private var pinned: some View {
-        let tabs = pinnedTabs
+        let tabs = favoriteTabs
         let cols = SideBar.pinColumns(tabs.count)
         let width = pinWidth
         let height = pinHeight
@@ -362,7 +374,7 @@ struct SideBar: View {
     }
 
     private func pinTarget(from: Int, moved: Int) -> Int {
-        min(max(0, from + moved), max(0, pinnedTabs.count - 1))
+        min(max(0, from + moved), max(0, favoriteTabs.count - 1))
     }
 
     /// Pick a square up and the others make way — across a row, and down
@@ -418,9 +430,54 @@ struct SideBar: View {
         .coordinateSpace(name: "rows")
     }
 
+    /// The pins: rows under the cards, for the pages kept all day that want
+    /// their titles rather than a letter. Carried within the pins only;
+    /// `move` keeps them there.
+    private var pinRows: some View {
+        VStack(spacing: SideBar.gap) {
+            ForEach(Array(pinTabs.enumerated()), id: \.element.id) { index, tab in
+                SideRow(
+                    browser: browser,
+                    prefs: prefs,
+                    tab: tab,
+                    live: tab.id == browser.activeID,
+                    pill: pill,
+                    close: { browser.close(tab) }
+                )
+                // Positions here are among the pins; the favorites sit in
+                // front of them in the real list.
+                .modifier(Carried(index: index, count: pinTabs.count, step: SideBar.row + SideBar.gap, vertical: true, space: "pins") {
+                    browser.move(tab, to: $0 + browser.favoriteCount)
+                })
+            }
+        }
+        .coordinateSpace(name: "pins")
+    }
+
+    /// Between the pins and the day's tabs, and only when there are pins.
+    private var divider: some View {
+        Rectangle()
+            .fill(Palette.hairline)
+            .frame(height: 1)
+            .padding(.horizontal, 10)
+            .frame(height: SideBar.divider)
+    }
+
+    /// The pins and their divider, as tall as they are drawn: `rowsEnd`
+    /// adds this same number, so the window's drag area starts exactly
+    /// where the rows stop.
+    private var pinBlock: CGFloat {
+        let pins = CGFloat(browser.pinCount)
+        return pins == 0 ? 0 : pins * (SideBar.row + SideBar.gap) - SideBar.gap + SideBar.divider
+    }
+
     /// The loose tabs and the row that makes another, which scroll as one.
     private var rows: some View {
         VStack(alignment: .leading, spacing: 0) {
+            if browser.pinCount > 0 {
+                pinRows
+                divider
+            }
             loose
             newTab
         }
@@ -570,6 +627,15 @@ private struct SideRow: View {
 
     private var editing: Bool { browser.editingTab == tab.id }
 
+    /// A pin, drawn as a row: its icon always, no cross — ⌘W or a
+    /// middle-click puts it down — and in the cross's place, while it is
+    /// away from its page, the way back.
+    private var kept: Bool { tab.pin != nil }
+
+    /// What sits at the row's end and takes the title's last few points: the
+    /// cross under the pointer, or a pin's way back while it is away.
+    private var endMark: Bool { kept ? tab.away : hovering }
+
     /// The ring or the speaker, which stay for as long as the page loads or
     /// plays (or is muted) and so keep a place of their own at the end of the
     /// row. The cross is only there under the pointer, and takes none.
@@ -584,7 +650,7 @@ private struct SideRow: View {
                 TabAddressField(browser: browser)
                     .frame(height: 16)
             } else {
-                if prefs.glyph == .icons, !tab.isBlank {
+                if prefs.glyph == .icons || kept, !tab.isBlank {
                     Mark(icon: tab.icon, letter: tab.monogram, size: 15)
                 }
                 if tab.bench {
@@ -618,8 +684,8 @@ private struct SideRow: View {
                 .frame(width: 15, height: 15)
                 // The cross takes this place while the pointer is here; the
                 // speaker moves one place in, clear of the cross's reach.
-                .opacity(hovering && !speaker ? 0 : 1)
-                .padding(.trailing, hovering && speaker ? 23 : 0)
+                .opacity(endMark && !speaker ? 0 : 1)
+                .padding(.trailing, endMark && speaker ? 23 : 0)
             }
         }
         .padding(.leading, 10)
@@ -631,7 +697,7 @@ private struct SideRow: View {
         // doesn't jump on each row the pointer passes.
         .mask {
             ZStack {
-                Rectangle().opacity(hovering && !editing && !status ? 0 : 1)
+                Rectangle().opacity(endMark && !editing && !status ? 0 : 1)
                 HStack(spacing: 0) {
                     Rectangle()
                     LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing)
@@ -642,33 +708,55 @@ private struct SideRow: View {
         }
         .overlay(alignment: .trailing) {
             if !editing {
-                ZStack {
-                    if hovering {
-                        Image(systemName: "xmark")
+                if kept {
+                    if tab.away {
+                        Image(systemName: "arrow.uturn.backward")
                             .font(.system(size: 8, weight: .semibold))
                             .foregroundStyle(Palette.muted)
                             .frame(width: 15, height: 15)
-                            .background(Palette.ink.opacity(0.07), in: Circle())
+                            .background(Palette.ink.opacity(hovering ? 0.07 : 0), in: Circle())
+                            .overlay {
+                                Color.clear
+                                    .frame(width: 30, height: 28)
+                                    .contentShape(Rectangle())
+                                    .onTapGesture { browser.goHome(tab) }
+                            }
+                            .help("Back to Pinned Page")
+                            .padding(.trailing, 7)
                             .transition(.opacity)
                     }
+                } else {
+                    ZStack {
+                        if hovering {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 8, weight: .semibold))
+                                .foregroundStyle(Palette.muted)
+                                .frame(width: 15, height: 15)
+                                .background(Palette.ink.opacity(0.07), in: Circle())
+                                .transition(.opacity)
+                        }
+                    }
+                    .frame(width: 15, height: 15)
+                    .overlay {
+                        Color.clear
+                            .frame(width: 30, height: 28)
+                            .contentShape(Rectangle())
+                            .onTapGesture { if hovering { close() } }
+                    }
+                    .padding(.trailing, 7)
                 }
-                .frame(width: 15, height: 15)
-                .overlay {
-                    Color.clear
-                        .frame(width: 30, height: 28)
-                        .contentShape(Rectangle())
-                        .onTapGesture { if hovering { close() } }
-                }
-                .padding(.trailing, 7)
             }
         }
+        .animation(Motion.quick, value: tab.away)
         .animation(Motion.quick, value: tab.loading)
         .animation(Motion.quick, value: speaker)
         .background { ground }
         .modifier(Shake(travel: shake))
         .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-        .modifier(OneClick(double: false) {
-            if live { browser.beginTabEdit(tab) } else { browser.select(tab) }
+        // A pin you are on is renamed with a double-click, as a card has its
+        // letter changed; a tab you are on turns into its address.
+        .modifier(OneClick(double: live && kept) {
+            if !live { browser.select(tab) } else if kept { browser.beginTabRename(tab) } else { browser.beginTabEdit(tab) }
         })
         .overlay { MiddleClick(act: close) }
         .onHover { hovering = $0 }
