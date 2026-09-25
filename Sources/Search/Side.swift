@@ -101,6 +101,7 @@ struct SideBar: View {
         .animation(Motion.glide, value: browser.editingTab)
         .animation(Motion.settle, value: browser.tabs.map(\.id))
         .animation(Motion.settle, value: browser.pinnedCount)
+        .animation(Motion.settle, value: browser.favoriteCount)
     }
 
     /// The column's edge: pull it to make the column wider or narrower,
@@ -181,7 +182,7 @@ struct SideBar: View {
                         pinned
                             .padding(.bottom, 10)
                     }
-                    // A row too long for the window scrolls between the pins
+                    // A row too long for the window scrolls between the cards
                     // and the foot, rather than running under the lights at one
                     // end and the foot at the other. While it fits it stays a
                     // plain stack, and the space under it is still the
@@ -446,12 +447,12 @@ struct SideBar: View {
                 )
                 // Positions here are among the pins; the favorites sit in
                 // front of them in the real list.
-                .modifier(Carried(index: index, count: pinTabs.count, step: SideBar.row + SideBar.gap, vertical: true, space: "pins") {
+                .modifier(Carried(index: index, count: pinTabs.count, step: SideBar.row + SideBar.gap, vertical: true, space: "pinRows") {
                     browser.move(tab, to: $0 + browser.favoriteCount)
                 })
             }
         }
-        .coordinateSpace(name: "pins")
+        .coordinateSpace(name: "pinRows")
     }
 
     /// Between the pins and the day's tabs, and only when there are pins.
@@ -463,15 +464,16 @@ struct SideBar: View {
             .frame(height: SideBar.divider)
     }
 
-    /// The pins and their divider, as tall as they are drawn: `rowsEnd`
-    /// adds this same number, so the window's drag area starts exactly
-    /// where the rows stop.
+    /// Not drawn on its own — `rowsEnd` adds this up from the same
+    /// constants the pins and the divider are actually drawn with, so a
+    /// change to one of those has to be made in the other too.
     private var pinBlock: CGFloat {
         let pins = CGFloat(browser.pinCount)
         return pins == 0 ? 0 : pins * (SideBar.row + SideBar.gap) - SideBar.gap + SideBar.divider
     }
 
-    /// The loose tabs and the row that makes another, which scroll as one.
+    /// The pins and their line, then the loose tabs and the row that makes
+    /// another, which scroll as one.
     private var rows: some View {
         VStack(alignment: .leading, spacing: 0) {
             if browser.pinCount > 0 {
