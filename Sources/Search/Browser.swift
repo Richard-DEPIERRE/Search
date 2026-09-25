@@ -613,8 +613,18 @@ final class Browser: NSObject, ObservableObject {
     /// Back to the page a favorite or pin was kept at.
     func goHome(_ tab: Tab) {
         guard tab.pin != nil else { return }
-        if activeID != tab.id { select(tab) }
-        tab.goHome()
+        if tab.asleep {
+            // Selecting a sleeping tab wakes it at the page it slept on, and
+            // that load waits a beat for its view to reach the window. A trip
+            // home started meanwhile had the old page arrive in the middle of
+            // it, counted as where home landed — away, with no dot to say so.
+            // Put down at home first, the wake is the trip home.
+            tab.rest()
+            if activeID != tab.id { select(tab) } else { tab.wake() }
+        } else {
+            if activeID != tab.id { select(tab) }
+            tab.goHome()
+        }
         rememberSession()
     }
 
