@@ -597,6 +597,10 @@ struct Carried: ViewModifier {
     @State private var held = false
     @State private var from = 0
     @State private var travel: CGFloat = 0
+    /// The last place this drag asked for. A move may land elsewhere, as a
+    /// folder does beside another folder, and asking again every event
+    /// would bounce it.
+    @State private var asked: Int?
 
     func body(content: Content) -> some View {
         // What it has travelled, less the ground its new place has already
@@ -618,10 +622,12 @@ struct Carried: ViewModifier {
                         if !held {
                             held = true
                             from = index
+                            asked = index
                         }
                         travel = vertical ? value.translation.height : value.translation.width
                         let target = min(max(0, from + Int((travel / step).rounded())), count - 1)
-                        if target != index {
+                        if target != asked {
+                            asked = target
                             withAnimation(Motion.settle) { move(target) }
                         }
                     }
@@ -629,6 +635,7 @@ struct Carried: ViewModifier {
                         withAnimation(Motion.settle) {
                             held = false
                             travel = 0
+                            asked = nil
                         }
                     }
             )

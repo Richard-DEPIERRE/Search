@@ -1039,7 +1039,9 @@ private struct FolderField: NSViewRepresentable {
         func controlTextDidEndEditing(_ note: Notification) {
             guard let field = note.object as? NSTextField else { return }
             if !cancelled { browser.renameFolder(id, to: field.stringValue) }
-            browser.endFolderEdit()
+            // Only its own edit: Rename chosen on another folder meanwhile
+            // has already moved the field on.
+            if browser.editingFolder == id { browser.endFolderEdit() }
         }
     }
 }
