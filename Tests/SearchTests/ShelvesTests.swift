@@ -55,6 +55,13 @@ private let play = Folder(id: UUID(uuidString: "F0000000-0000-0000-0000-00000000
         #expect(out == row)
         #expect(folders == [work])
     }
+
+    @Test func aFolderListedTwiceIsKeptOnce() {
+        let row = [slot(1, kept: true, .pins, folder: work.id), slot(2, kept: true, .pins, folder: work.id)]
+        let (out, folders) = Shelves.tidy(row, folders: [work, work])
+        #expect(out == row)
+        #expect(folders == [work])
+    }
 }
 
 @Suite struct MoveTests {
@@ -250,6 +257,12 @@ private func folder(of n: Int, in pins: [Slot]) -> UUID? { pins.first { $0.id ==
         let rows = Shelves.pinnedRows([slot(7, kept: true, .pins, folder: ghost)], folders: [], active: nil)
         #expect(rows == [.pin(pinID(7), folder: nil)])
     }
+
+    @Test func aFolderListedTwiceDoesNotBreakTheDrawing() {
+        let twice = Shelves.pinnedRows(pinsFixture, folders: [work, work, play], active: nil)
+        let once = Shelves.pinnedRows(pinsFixture, folders: [work, play], active: nil)
+        #expect(twice == once)
+    }
 }
 
 @Suite struct MovePinTests {
@@ -301,6 +314,18 @@ private func folder(of n: Int, in pins: [Slot]) -> UUID? { pins.first { $0.id ==
     @Test func nowhereOrTheSamePlaceChangesNothing() {
         #expect(Shelves.movePin(pinID(3), to: 9, pins: pinsFixture, folders: bothFolders, active: nil) == pinsFixture)
         #expect(Shelves.movePin(pinID(3), to: 3, pins: pinsFixture, folders: bothFolders, active: nil) == pinsFixture)
+    }
+
+    @Test func aPinWhoseFolderIsNotKnownTakesTheFolderItsPlaceGives() {
+        // Rows: 0 Work, 1 p1, 2 p2, 3 p3, 4 Play, 5 p6, 6 p7 (drawn loose).
+        let ghost = UUID()
+        let pins = pinsFixture + [slot(7, kept: true, .pins, folder: ghost)]
+        let between = Shelves.movePin(pinID(7), to: 2, pins: pins, folders: bothFolders, active: nil)
+        #expect(numbers(between) == [1, 7, 2, 3, 4, 5, 6])
+        #expect(folder(of: 7, in: between) == work.id)
+        let loose = Shelves.movePin(pinID(7), to: 3, pins: pins, folders: bothFolders, active: nil)
+        #expect(numbers(loose) == [1, 2, 7, 3, 4, 5, 6])
+        #expect(folder(of: 7, in: loose) == nil)
     }
 }
 
@@ -368,6 +393,21 @@ private func folder(of n: Int, in pins: [Slot]) -> UUID? { pins.first { $0.id ==
         #expect(numbers(once) == [3, 4, 1, 2, 5])
         #expect(numbers(twice) == numbers(once))
     }
+
+    @Test func aClosedFolderHoldingTheTabYouAreOnMovesAsOneBlock() {
+        // Rows: 0 Work, 1 p1, 2 p2, 3 p3, 4 Play, 5 p5 (shown: you are on it), 6 p6.
+        // Carried to the end, the block is Play's row and p5: were p5 left
+        // behind, it would stand on its own before p6.
+        let out = Shelves.moveFolder(play.id, to: 6, pins: pinsFixture, folders: bothFolders, active: pinID(5))
+        #expect(numbers(out) == [1, 2, 3, 6, 4, 5])
+        #expect(folder(of: 4, in: out) == play.id)
+        #expect(folder(of: 5, in: out) == play.id)
+    }
+
+    @Test func pastTheEndChangesNothing() {
+        #expect(Shelves.moveFolder(play.id, to: 6, pins: pinsFixture, folders: bothFolders, active: nil) == pinsFixture)
+        #expect(Shelves.moveFolder(play.id, to: 9, pins: pinsFixture, folders: bothFolders, active: nil) == pinsFixture)
+    }
 }
 
 @Suite struct PlaceTests {
@@ -398,5 +438,34 @@ private func folder(of n: Int, in pins: [Slot]) -> UUID? { pins.first { $0.id ==
 
     @Test func outOfNoFolderChangesNothing() {
         #expect(Shelves.place(pinID(3), into: nil, pins: pinsFixture) == pinsFixture)
+    }
+}
+
+@Suite struct FolderBetweenTests {
+    // The top bar is one flat row: favorites, pins, then the rest.
+
+    @Test func inTheTopBarBetweenTwoPinsOfAFolderJoinsIt() {
+        let row = [slot(1, kept: true), slot(2, kept: true, .pins, folder: work.id), slot(3, kept: true, .pins), slot(4, kept: true, .pins, folder: work.id), slot(5)]
+        #expect(Shelves.folderBetween(row, at: 2) == work.id)
+    }
+
+    @Test func afterAFoldersLastPinAndBeforeALooseOneIsLoose() {
+        let row = [slot(1, kept: true, .pins, folder: work.id), slot(2, kept: true, .pins, folder: work.id), slot(3, kept: true, .pins, folder: work.id), slot(4, kept: true, .pins)]
+        #expect(Shelves.folderBetween(row, at: 2) == nil)
+    }
+
+    @Test func theFirstPinAfterAFavoriteIsLoose() {
+        let row = [slot(1, kept: true), slot(2, kept: true, .pins, folder: work.id), slot(3, kept: true, .pins, folder: work.id)]
+        #expect(Shelves.folderBetween(row, at: 1) == nil)
+    }
+
+    @Test func betweenTwoFoldersIsLoose() {
+        let row = [slot(1, kept: true, .pins, folder: work.id), slot(2, kept: true, .pins, folder: work.id), slot(3, kept: true, .pins, folder: play.id)]
+        #expect(Shelves.folderBetween(row, at: 1) == nil)
+    }
+
+    @Test func theLastSlotIsLoose() {
+        let row = [slot(1, kept: true, .pins, folder: work.id), slot(2, kept: true, .pins, folder: work.id)]
+        #expect(Shelves.folderBetween(row, at: 1) == nil)
     }
 }

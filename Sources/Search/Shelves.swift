@@ -85,7 +85,12 @@ enum Shelves {
             gathered.insert(folder)
             pins += allPins.filter { $0.folder == folder }
         }
-        return (favorites + pins + loose, folders.filter { gathered.contains($0.id) })
+        // A folder listed twice, as only a hand-edited file could have it, is
+        // kept once: the first one is the one the pins are drawn under, and
+        // the drawing looks folders up by id.
+        var seen = Set<UUID>()
+        let kept = folders.filter { gathered.contains($0.id) && seen.insert($0.id).inserted }
+        return (favorites + pins + loose, kept)
     }
 
     /// A drag moves a tab among its own kind only: a favorite among the
@@ -161,7 +166,9 @@ enum Shelves {
     /// A pin whose folder isn't there is drawn loose. `pins` is the pins
     /// section, already tidied (each folder's pins side by side).
     static func pinnedRows(_ pins: [Slot], folders: [Folder], active: UUID?) -> [PinnedRow] {
-        let open = Dictionary(uniqueKeysWithValues: folders.map { ($0.id, $0.open) })
+        // Not `uniqueKeysWithValues`: a folder listed twice would stop the app
+        // on every draw. The first one wins, as it does in `tidy`.
+        let open = Dictionary(folders.map { ($0.id, $0.open) }, uniquingKeysWith: { first, _ in first })
         var rows: [PinnedRow] = []
         var drawn = Set<UUID>()
         for pin in pins {
@@ -179,7 +186,7 @@ enum Shelves {
     }
 
     /// A pin carried to `target` among the drawn rows, and the folder that
-    /// place puts it in: between two pins of a folder, or right under an
+    /// spot puts it in: between two pins of a folder, or right under an
     /// open folder's row, it joins that folder; anywhere else it is loose.
     /// Past a closed folder it goes after the folder, never into it — Move to
     /// Folder is the way into one.
@@ -251,6 +258,21 @@ enum Shelves {
         return rest
     }
 
+    /// The folder a pin dragged in the top bar lands in. That bar is one flat
+    /// row and draws no folder rows, so the only place it can show a pin
+    /// joining a folder is between two of that folder's pins; anywhere else
+    /// the pin is loose. `slots` is the whole row, already in its new order,
+    /// and `index` is where the pin now stands. Its own folder doesn't count:
+    /// where it was dropped is what decides.
+    static func folderBetween(_ slots: [Slot], at index: Int) -> UUID? {
+        guard index > 0, index + 1 < slots.count else { return nil }
+        let before = slots[index - 1], after = slots[index + 1]
+        guard section(of: before) == .pins, section(of: after) == .pins,
+              let folder = before.folder, after.folder == folder
+        else { return nil }
+        return folder
+    }
+
     /// Drawn rows back into the pins' order. A closed folder's pins, drawn or
     /// not, stand where its row is; every other pin stands where its own row
     /// is; `moved` takes the folder its new place gave it.
@@ -274,7 +296,7 @@ enum Shelves {
             }
         }
         // Nothing drawn is missing from the rows, but a pin is never lost to a
-        // drawing: anything left over keeps its place at the end.
+        // drawing: anything left over goes at the end, in its old order.
         for slot in pins where !placed.contains(slot.id) { order.append(slot) }
         return order
     }

@@ -70,6 +70,19 @@ import Testing
         #expect(shape.folders?.map(\.name) == ["Work"])
     }
 
+    @Test func aFolderListedTwiceStillReads() throws {
+        let json = """
+        {"tabs":[{"url":"https://a.com/","title":"A","pin":"A","shelf":"pins","folder":"F0000000-0000-0000-0000-000000000001"}],
+         "active":0,
+         "folders":[{"id":"F0000000-0000-0000-0000-000000000001","name":"Work","open":true},{"id":"F0000000-0000-0000-0000-000000000001","name":"Work again","open":false}]}
+        """
+        let shape = try JSONDecoder().decode(Session.Shape.self, from: Data(json.utf8))
+        #expect(shape.folders?.count == 2)
+        let slots = shape.tabs.map { Slot(id: UUID(), kept: $0.pin != nil, shelf: $0.keptShelf, folder: $0.folderID) }
+        let (_, folders) = Shelves.tidy(slots, folders: shape.folders ?? [])
+        #expect(folders.map(\.name) == ["Work"])
+    }
+
     @Test func foldersThatAreNotAListAreDroppedNotTheSession() throws {
         let json = """
         {"tabs":[{"url":"https://a.com/","title":"A"}],"active":0,"folders":"nonsense"}

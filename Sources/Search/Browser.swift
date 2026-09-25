@@ -561,6 +561,11 @@ final class Browser: NSObject, ObservableObject {
         let (order, kept) = Browser.tidied(tabs, folders: folders)
         if order.map(\.id) != tabs.map(\.id) { tabs = order }
         if kept != folders { folders = kept }
+        // A folder that went, with its name still being typed over, would
+        // leave the rename waiting for a row that will never be drawn.
+        if let editing = editingFolder, !folders.contains(where: { $0.id == editing }) {
+            editingFolder = nil
+        }
     }
 
     /// A tab made a favorite or a pin, or a kept one moved from one shelf to
@@ -691,7 +696,10 @@ final class Browser: NSObject, ObservableObject {
         folders.append(folder)
         tab.folder = folder.id
         tidyTabs()
-        editingFolder = folder.id
+        // Only the column draws folder rows. With the tabs across the top the
+        // name field would have nowhere to be, and would turn up later, out
+        // of nowhere, the next time the column is shown.
+        if prefs.sidebar { editingFolder = folder.id }
         writeSession(now: true)
     }
 
@@ -1441,6 +1449,14 @@ final class Browser: NSObject, ObservableObject {
         // the middle of the titles would stop meaning anything.
         guard Shelves.canMove(slots, from: here, to: index) else { return }
         tabs.move(fromOffsets: IndexSet(integer: here), toOffset: index > here ? index + 1 : index)
+        // A pin carried in the top bar, which draws no folder rows, takes the
+        // folder its new place gives it (see Shelves.folderBetween). Left
+        // with its old one, the column would show that folder split in two
+        // until the next tidy quietly put the pin back.
+        if tab.pin != nil, tab.shelf == .pins, let now = tabs.firstIndex(where: { $0.id == tab.id }) {
+            tab.folder = Shelves.folderBetween(Browser.slots(of: tabs), at: now)
+            tidyTabs()
+        }
         rememberSession()
     }
 
