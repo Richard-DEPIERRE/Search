@@ -197,3 +197,17 @@ private let play = Folder(id: UUID(uuidString: "F0000000-0000-0000-0000-00000000
         #expect(folders == [work])
     }
 }
+
+@Suite struct TripTests {
+    @Test func aCancelledLoadDoesNotEndTheTrip() {
+        #expect(!Shelves.failureEndsTrip(domain: NSURLErrorDomain, code: NSURLErrorCancelled))
+    }
+
+    @Test func aHostThatIsNotThereEndsIt() {
+        #expect(Shelves.failureEndsTrip(domain: NSURLErrorDomain, code: NSURLErrorCannotFindHost))
+    }
+
+    @Test func aWebKitFailureEndsIt() {
+        #expect(Shelves.failureEndsTrip(domain: "WebKitErrorDomain", code: 102))
+    }
+}

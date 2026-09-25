@@ -2044,6 +2044,10 @@ extension Browser: WKNavigationDelegate, WKUIDelegate {
         // The next document gets this site's stylesheet of hidden things,
         // decided here because here is the last moment before it loads.
         if action.targetFrame?.isMainFrame ?? true, let tab = tab(for: webView) {
+            // A navigation of yours — a link, Back, a form, a reload — begun
+            // before home arrived ends the trip. Redirects on the way home,
+            // and the trip's own load, come as .other.
+            if action.navigationType != .other { tab.tripInterrupted() }
             let host = curtain.host(of: url)
             tab.arm(hiding: curtain.css(on: host))
             // And the blocker, on or off for where it is going.
@@ -2211,7 +2215,7 @@ extension Browser: WKNavigationDelegate, WKUIDelegate {
         didFailProvisionalNavigation navigation: WKNavigation!,
         withError error: Error
     ) {
-        tab(for: webView)?.tripFailed()
+        anyTab(for: webView)?.tripFailed(error)
         fail(webView, error)
     }
 
@@ -2234,8 +2238,8 @@ extension Browser: WKNavigationDelegate, WKUIDelegate {
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        anyTab(for: webView)?.committed()
         guard let tab = tab(for: webView) else { return }
-        tab.committed()
         if tab.id == activeID { linkStatus.dismiss() }
         tab.failure = nil
         tab.typing = false
@@ -2308,6 +2312,12 @@ extension Browser: WKNavigationDelegate, WKUIDelegate {
 
     func tab(for webView: WKWebView) -> Tab? {
         tabs.first { $0.built === webView }
+    }
+
+    /// The tab a page belongs to, on screen or parked in another space: a
+    /// trip home under way when you switched spaces still arrives.
+    private func anyTab(for webView: WKWebView) -> Tab? {
+        tab(for: webView) ?? parkedTabs.first { $0.built === webView }
     }
 }
 

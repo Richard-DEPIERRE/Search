@@ -409,8 +409,8 @@ final class Tab: ObservableObject, Identifiable {
     func goHome() {
         guard let home else { return }
         landed = nil
-        homing = true
         go(to: home)
+        homing = true
     }
 
     /// The page has committed. A trip home ends here, and where it arrived,
@@ -424,8 +424,17 @@ final class Tab: ObservableObject, Identifiable {
     }
 
     /// The trip home never arrived: no host, no network. Whatever is
-    /// committed next is you going somewhere, not home.
-    func tripFailed() {
+    /// committed next is you going somewhere, not home. A cancelled load is
+    /// not that: it is, most often, the page the trip itself stopped.
+    func tripFailed(_ error: Error) {
+        let failure = error as NSError
+        guard Shelves.failureEndsTrip(domain: failure.domain, code: failure.code) else { return }
+        homing = false
+    }
+
+    /// You went somewhere yourself before home arrived: a link, Back, a
+    /// form, a reload. What commits next is that, not home.
+    func tripInterrupted() {
         homing = false
     }
 
@@ -808,6 +817,9 @@ final class Tab: ObservableObject, Identifiable {
     }
 
     func go(to url: URL) {
+        // Sent somewhere by hand: any trip home under way is over. goHome
+        // starts its own trip after calling this.
+        homing = false
         // Judged by the page it shows, not by how it was made: a tab an
         // extension's page opened with window.open is built from that
         // extension's configuration too. A tab with no page yet was just

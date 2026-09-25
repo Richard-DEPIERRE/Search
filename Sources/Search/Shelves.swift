@@ -131,4 +131,11 @@ enum Shelves {
     static func count(_ slots: [Slot], of wanted: Section) -> Int {
         slots.filter { section(of: $0) == wanted }.count
     }
+
+    /// Whether a failed load ends a trip home. A load cancelled — most often
+    /// the one the trip itself stopped by starting — says nothing about the
+    /// trip; any other failure means home isn't coming.
+    static func failureEndsTrip(domain: String, code: Int) -> Bool {
+        !(domain == NSURLErrorDomain && code == NSURLErrorCancelled)
+    }
 }
