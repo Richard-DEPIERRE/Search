@@ -1047,8 +1047,11 @@ final class Browser: NSObject, ObservableObject {
                           url.scheme?.hasPrefix("http") == true
                     else { return nil }
                     let kept = tab.pin != nil
+                    let saved = Shelves.savedAddress(
+                        address: url, home: tab.home, kept: kept, asleep: tab.asleep, away: tab.away
+                    )
                     return Session.Entry(
-                        url: url.absoluteString, title: tab.title, pin: tab.pin, name: tab.name,
+                        url: saved.absoluteString, title: tab.title, pin: tab.pin, name: tab.name,
                         shelf: kept ? tab.shelf.rawValue : nil,
                         home: kept ? tab.home?.absoluteString : nil,
                         folder: kept ? tab.folder?.uuidString : nil

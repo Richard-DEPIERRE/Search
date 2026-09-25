@@ -105,4 +105,15 @@ enum Shelves {
         if let landed, here == normalised(landed) { return true }
         return false
     }
+
+    /// Where the session saves a tab. A kept tab that is awake on its own
+    /// page is saved at its home, not at wherever the trip home landed: the
+    /// landing isn't saved, so a relaunch would find it on a page that is
+    /// neither and count it as away. Asleep, it is saved where it was put
+    /// down; away, where it wandered to — both are what the next launch
+    /// should open.
+    static func savedAddress(address: URL, home: URL?, kept: Bool, asleep: Bool, away: Bool) -> URL {
+        guard kept, !asleep, !away, let home else { return address }
+        return home
+    }
 }

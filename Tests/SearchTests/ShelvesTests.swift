@@ -106,3 +106,29 @@ private let play = Folder(id: UUID(uuidString: "F0000000-0000-0000-0000-00000000
         #expect(Shelves.isHome(URL(string: "https://a.com")!, home: nil, landed: nil))
     }
 }
+
+@Suite struct SavedAddressTests {
+    let home = URL(string: "https://mail.example.com/")!
+    let landed = URL(string: "https://mail.example.com/mail/u/0/")!
+    let elsewhere = URL(string: "https://mail.example.com/settings")!
+
+    @Test func awakeWhereTheTripHomeLandedIsSavedAtHome() {
+        #expect(Shelves.savedAddress(address: landed, home: home, kept: true, asleep: false, away: false) == home)
+    }
+
+    @Test func awayIsSavedWhereItIs() {
+        #expect(Shelves.savedAddress(address: elsewhere, home: home, kept: true, asleep: false, away: true) == elsewhere)
+    }
+
+    @Test func asleepIsSavedWhereItWasPutDown() {
+        #expect(Shelves.savedAddress(address: landed, home: home, kept: true, asleep: true, away: false) == landed)
+    }
+
+    @Test func aTabNotKeptIsSavedWhereItIs() {
+        #expect(Shelves.savedAddress(address: landed, home: home, kept: false, asleep: false, away: false) == landed)
+    }
+
+    @Test func noHomeIsSavedWhereItIs() {
+        #expect(Shelves.savedAddress(address: landed, home: nil, kept: true, asleep: false, away: false) == landed)
+    }
+}
