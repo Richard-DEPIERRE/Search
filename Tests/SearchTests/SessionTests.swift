@@ -33,6 +33,13 @@ import Testing
         #expect(entry.keptShelf == .favorites)
     }
 
+    /// `URL(string:)` takes almost anything; an empty string is one thing it
+    /// reliably won't.
+    @Test func aHomeThatWontParseFallsBackToTheURL() {
+        let entry = Session.Entry(url: "https://a.com/x", title: "", pin: "A", home: "")
+        #expect(entry.keptHome == URL(string: "https://a.com/x"))
+    }
+
     @Test func aNewFileSurvivesTheRoundTrip() throws {
         let folder = Folder(id: UUID(), name: "Work", open: false)
         let shape = Session.Shape(

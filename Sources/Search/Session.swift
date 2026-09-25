@@ -25,10 +25,12 @@ enum Session {
         var keptShelf: Shelf { shelf.flatMap(Shelf.init(rawValue:)) ?? .favorites }
 
         /// The page a kept tab goes back to. From before there was one: the
-        /// page it was on, which is the page it was put down at.
+        /// page it was on, which is the page it was put down at. A home that
+        /// won't read as an address falls back the same way, rather than
+        /// leaving the tab with nowhere to go back to.
         var keptHome: URL? {
             guard pin != nil else { return nil }
-            return URL(string: home ?? url)
+            return home.flatMap(URL.init(string:)) ?? URL(string: url)
         }
 
         var folderID: UUID? {
