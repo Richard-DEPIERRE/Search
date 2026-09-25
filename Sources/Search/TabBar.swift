@@ -752,18 +752,7 @@ struct TabMenu: View {
     let close: () -> Void
 
     var body: some View {
-        if tab.pin == nil {
-            Button("Add to Favorites") { browser.pin(tab) }
-                .disabled(tab.isBlank)
-        } else {
-            Button("Change Letter") { browser.editLetter(tab) }
-            Button("Remove from Favorites") { browser.unpin(tab) }
-            Divider()
-            Button("Back to Pinned Page") { browser.goHome(tab) }
-                .disabled(!tab.away)
-            Button("Set Pinned Page to This Page") { browser.setHome(tab) }
-                .disabled(!tab.away || tab.address == nil)
-        }
+        KeptTabCommands(browser: browser, tab: tab)
         Divider()
         Button("Rename") { browser.beginTabRename(tab) }
         Button("Duplicate") {
@@ -972,8 +961,9 @@ struct PinField: NSViewRepresentable {
     }
 }
 
-/// The Tabs menu's lines for the tab on screen: watched as a tab, so Back to
-/// Pinned Page lights up the moment the page wanders off.
+/// The kept-tab lines shared by the Tabs menu and a tab's right-click menu:
+/// watched as a tab, so Back to Pinned Page lights up the moment the page
+/// wanders off.
 struct KeptTabCommands: View {
     @ObservedObject var browser: Browser
     @ObservedObject var tab: Tab
