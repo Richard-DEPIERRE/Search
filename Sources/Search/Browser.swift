@@ -527,20 +527,48 @@ final class Browser: NSObject, ObservableObject {
 
     var pinnedCount: Int { tabs.filter { $0.pin != nil }.count }
 
+    /// This space's folders of pins (see Shelves.swift). Saved with its tabs,
+    /// and parked with them while another space is on screen.
+    @Published var folders: [Folder] = []
+
+    /// The row as the shelf rules see it.
+    private var slots: [Slot] { Browser.slots(of: tabs) }
+
+    private static func slots(of row: [Tab]) -> [Slot] {
+        row.map { Slot(id: $0.id, kept: $0.pin != nil, shelf: $0.shelf, folder: $0.folder) }
+    }
+
+    /// A row put in its order — favorites, pins with each folder's together,
+    /// then the rest — and the folders still holding something. For a row
+    /// on screen or one being made for a space that isn't.
+    static func tidied(_ row: [Tab], folders: [Folder]) -> (tabs: [Tab], folders: [Folder]) {
+        let (order, kept) = Shelves.tidy(slots(of: row), folders: folders)
+        let byID = Dictionary(uniqueKeysWithValues: row.map { ($0.id, $0) })
+        let tabs = order.compactMap { slot -> Tab? in
+            guard let tab = byID[slot.id] else { return nil }
+            if tab.folder != slot.folder { tab.folder = slot.folder }
+            return tab
+        }
+        return (tabs, kept)
+    }
+
+    /// After anything that changes which tabs are kept, or where.
+    func tidyTabs() {
+        let (order, kept) = Browser.tidied(tabs, folders: folders)
+        if order.map(\.id) != tabs.map(\.id) { tabs = order }
+        if kept != folders { folders = kept }
+    }
+
     func pin(_ tab: Tab) {
         if tab.pin == nil {
             tab.pin = tab.monogram
-            // Pinned tabs live at the head of the row, in the order they were
-            // pinned, so their letters never move under your hand.
-            if let here = tabs.firstIndex(where: { $0.id == tab.id }) {
-                let home = max(0, pinnedCount - 1)
-                if here != home {
-                    tabs.move(
-                        fromOffsets: IndexSet(integer: here),
-                        toOffset: home > here ? home + 1 : home
-                    )
-                }
-            }
+            tab.shelf = .favorites
+            // The page it is on is the page it goes back to.
+            tab.remember(home: tab.address)
+            // Favorites live at the head of the row, in the order they were
+            // added, so their letters never move under your hand: tidying
+            // leaves the others where they are and puts this one after them.
+            tidyTabs()
         }
         // No dialog and no waiting cursor: the letter is taken from the
         // address and applied. Changing it is a separate act, for the day it
@@ -572,15 +600,27 @@ final class Browser: NSObject, ObservableObject {
     func unpin(_ tab: Tab) {
         if editingPin == tab.id { editingPin = nil }
         tab.pin = nil
-        defer { writeSession(now: true) }
-        // Back out of the pinned block, to the head of the loose tabs.
-        if let here = tabs.firstIndex(where: { $0.id == tab.id }) {
-            let home = pinnedCount
-            if here != home {
-                tabs.move(fromOffsets: IndexSet(integer: here), toOffset: home > here ? home + 1 : home)
-            }
-        }
+        tab.shelf = .favorites
+        tab.forgetHome()
+        // Out of the kept block, to the head of the loose tabs: it was in
+        // front of every one of them, and tidying keeps it there.
+        tidyTabs()
+        writeSession(now: true)
+    }
+
+    /// Back to the page a favorite or pin was kept at.
+    func goHome(_ tab: Tab) {
+        guard tab.pin != nil else { return }
+        if activeID != tab.id { select(tab) }
+        tab.goHome()
         rememberSession()
+    }
+
+    /// The page it is on becomes the page it goes back to.
+    func setHome(_ tab: Tab) {
+        guard tab.pin != nil, let url = tab.address else { return }
+        tab.remember(home: url)
+        writeSession(now: true)
     }
 
     // MARK: - the address, in the tab itself
@@ -859,16 +899,22 @@ final class Browser: NSObject, ObservableObject {
             prepare(tab)
             tab.restore(url: url, title: entry.title, name: entry.name)
             tab.pin = entry.pin
+            tab.shelf = entry.keptShelf
+            tab.remember(home: entry.keptHome)
+            tab.folder = entry.folderID
             tabs.append(tab)
         }
         guard !tabs.isEmpty else {
             adopt(Tab())
             return
         }
-        let here = min(max(0, saved.active), tabs.count - 1)
-        activeID = tabs[here].id
+        // Chosen by where it was in the file, before tidying moves anything.
+        let chosen = tabs[min(max(0, saved.active), tabs.count - 1)]
+        activeID = chosen.id
+        folders = saved.folders ?? []
+        tidyTabs()
         // Only the one you were looking at actually loads.
-        tabs[here].wake()
+        chosen.wake()
     }
 
     /// The few settings that something else has to be told about. The rest are
@@ -1000,11 +1046,16 @@ final class Browser: NSObject, ObservableObject {
                     guard let url = tab.pending ?? tab.address,
                           url.scheme?.hasPrefix("http") == true
                     else { return nil }
+                    let kept = tab.pin != nil
                     return Session.Entry(
-                        url: url.absoluteString, title: tab.title, pin: tab.pin, name: tab.name
+                        url: url.absoluteString, title: tab.title, pin: tab.pin, name: tab.name,
+                        shelf: kept ? tab.shelf.rawValue : nil,
+                        home: kept ? tab.home?.absoluteString : nil,
+                        folder: kept ? tab.folder?.uuidString : nil
                     )
                 },
-                active: tabs.firstIndex { $0.id == activeID } ?? 0
+                active: tabs.firstIndex { $0.id == activeID } ?? 0,
+                folders: folders.isEmpty ? nil : folders
             )
         )
     }
@@ -1227,11 +1278,9 @@ final class Browser: NSObject, ObservableObject {
         guard let here = tabs.firstIndex(where: { $0.id == tab.id }),
               index != here, tabs.indices.contains(index)
         else { return }
-        // The pinned block and the loose one don't mix: a letter that wandered
-        // into the middle of the titles would stop meaning anything.
-        let pinned = pinnedCount
-        if tab.pin != nil, index >= pinned { return }
-        if tab.pin == nil, index < pinned { return }
+        // Favorites, pins and the rest don't mix: a letter that wandered into
+        // the middle of the titles would stop meaning anything.
+        guard Shelves.canMove(slots, from: here, to: index) else { return }
         tabs.move(fromOffsets: IndexSet(integer: here), toOffset: index > here ? index + 1 : index)
         rememberSession()
     }
@@ -1444,16 +1493,21 @@ final class Browser: NSObject, ObservableObject {
             prepare(tab)
             tab.restore(url: url, title: entry.title, name: entry.name)
             tab.pin = entry.pin
+            tab.shelf = entry.keptShelf
+            tab.remember(home: entry.keptHome)
+            tab.folder = entry.folderID
             row.append(tab)
         }
         let active = row.indices.contains(saved.active) ? row[saved.active].id : row.first?.id
-        return Parked(tabs: row, active: active)
+        let (tidy, folders) = Browser.tidied(row, folders: saved.folders ?? [])
+        return Parked(tabs: tidy, active: active, folders: folders)
     }
 
     /// Another space's row put on screen in place of this one (see
     /// Spaces.swift) — empty, for one that restores its own.
-    func showRow(_ row: [Tab], active: Tab.ID?) {
+    func showRow(_ row: [Tab], active: Tab.ID?, folders: [Folder] = []) {
         tabs = row
+        self.folders = folders
         activeID = active ?? row.first?.id
     }
 
