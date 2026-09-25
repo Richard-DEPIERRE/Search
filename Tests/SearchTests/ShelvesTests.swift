@@ -211,3 +211,160 @@ private let play = Folder(id: UUID(uuidString: "F0000000-0000-0000-0000-00000000
         #expect(Shelves.failureEndsTrip(domain: "WebKitErrorDomain", code: 102))
     }
 }
+
+// Six pins: 1 and 2 in Work (open), 3 loose, 4 and 5 in Play (closed), 6 loose.
+private let pinsFixture: [Slot] = [
+    slot(1, kept: true, .pins, folder: work.id),
+    slot(2, kept: true, .pins, folder: work.id),
+    slot(3, kept: true, .pins),
+    slot(4, kept: true, .pins, folder: play.id),
+    slot(5, kept: true, .pins, folder: play.id),
+    slot(6, kept: true, .pins),
+]
+private let bothFolders = [work, play]
+private let side = Folder(id: UUID(uuidString: "F0000000-0000-0000-0000-000000000003")!, name: "Side", open: true)
+
+private func pinID(_ n: Int) -> UUID { slot(n).id }
+private func numbers(_ pins: [Slot]) -> [Int] { pins.map { Int($0.id.uuidString.suffix(12))! } }
+private func folder(of n: Int, in pins: [Slot]) -> UUID? { pins.first { $0.id == pinID(n) }?.folder }
+
+@Suite struct PinnedRowsTests {
+    @Test func foldersShowTheirRowAndOpenOnesTheirPins() {
+        let rows = Shelves.pinnedRows(pinsFixture, folders: bothFolders, active: nil)
+        #expect(rows == [
+            .folder(work.id), .pin(pinID(1), folder: work.id), .pin(pinID(2), folder: work.id),
+            .pin(pinID(3), folder: nil), .folder(play.id), .pin(pinID(6), folder: nil),
+        ])
+    }
+
+    @Test func theTabYouAreOnShowsUnderItsClosedFolder() {
+        let rows = Shelves.pinnedRows(pinsFixture, folders: bothFolders, active: pinID(5))
+        #expect(rows == [
+            .folder(work.id), .pin(pinID(1), folder: work.id), .pin(pinID(2), folder: work.id),
+            .pin(pinID(3), folder: nil), .folder(play.id), .pin(pinID(5), folder: play.id), .pin(pinID(6), folder: nil),
+        ])
+    }
+
+    @Test func aPinInAFolderThatIsNotThereIsDrawnLoose() {
+        let ghost = UUID()
+        let rows = Shelves.pinnedRows([slot(7, kept: true, .pins, folder: ghost)], folders: [], active: nil)
+        #expect(rows == [.pin(pinID(7), folder: nil)])
+    }
+}
+
+@Suite struct MovePinTests {
+    // Rows as drawn: 0 Work, 1 p1, 2 p2, 3 p3, 4 Play (closed), 5 p6.
+
+    @Test func betweenTwoPinsOfAFolderJoinsIt() {
+        let out = Shelves.movePin(pinID(3), to: 2, pins: pinsFixture, folders: bothFolders, active: nil)
+        #expect(numbers(out) == [1, 3, 2, 4, 5, 6])
+        #expect(folder(of: 3, in: out) == work.id)
+    }
+
+    @Test func directlyUnderAnOpenFoldersRowJoinsIt() {
+        let out = Shelves.movePin(pinID(3), to: 1, pins: pinsFixture, folders: bothFolders, active: nil)
+        #expect(numbers(out) == [3, 1, 2, 4, 5, 6])
+        #expect(folder(of: 3, in: out) == work.id)
+    }
+
+    @Test func belowAFoldersLastPinLeavesIt() {
+        let out = Shelves.movePin(pinID(2), to: 3, pins: pinsFixture, folders: bothFolders, active: nil)
+        #expect(numbers(out) == [1, 3, 2, 4, 5, 6])
+        #expect(folder(of: 2, in: out) == nil)
+    }
+
+    @Test func aboveAFoldersRowLeavesIt() {
+        let out = Shelves.movePin(pinID(1), to: 0, pins: pinsFixture, folders: bothFolders, active: nil)
+        #expect(numbers(out) == [1, 2, 3, 4, 5, 6])
+        #expect(folder(of: 1, in: out) == nil)
+    }
+
+    @Test func aboveAClosedFolderStaysOut() {
+        let out = Shelves.movePin(pinID(6), to: 4, pins: pinsFixture, folders: bothFolders, active: nil)
+        #expect(numbers(out) == [1, 2, 3, 6, 4, 5])
+        #expect(folder(of: 6, in: out) == nil)
+    }
+
+    @Test func pastAClosedFolderGoesAfterItNotIntoIt() {
+        let out = Shelves.movePin(pinID(3), to: 4, pins: pinsFixture, folders: bothFolders, active: nil)
+        #expect(numbers(out) == [1, 2, 4, 5, 3, 6])
+        #expect(folder(of: 3, in: out) == nil)
+    }
+
+    @Test func theTabYouAreOnLeavesItsClosedFolder() {
+        // Rows: 0 Work, 1 p1, 2 p2, 3 p3, 4 Play, 5 p5 (shown: you are on it), 6 p6.
+        let out = Shelves.movePin(pinID(5), to: 4, pins: pinsFixture, folders: bothFolders, active: pinID(5))
+        #expect(numbers(out) == [1, 2, 3, 5, 4, 6])
+        #expect(folder(of: 5, in: out) == nil)
+    }
+
+    @Test func nowhereOrTheSamePlaceChangesNothing() {
+        #expect(Shelves.movePin(pinID(3), to: 9, pins: pinsFixture, folders: bothFolders, active: nil) == pinsFixture)
+        #expect(Shelves.movePin(pinID(3), to: 3, pins: pinsFixture, folders: bothFolders, active: nil) == pinsFixture)
+    }
+}
+
+@Suite struct MoveFolderTests {
+    @Test func aClosedFolderMovedUpTakesItsPins() {
+        let out = Shelves.moveFolder(play.id, to: 3, pins: pinsFixture, folders: bothFolders, active: nil)
+        #expect(numbers(out) == [1, 2, 4, 5, 3, 6])
+    }
+
+    @Test func movedUpIntoAnotherFolderItLandsBeforeIt() {
+        let out = Shelves.moveFolder(play.id, to: 2, pins: pinsFixture, folders: bothFolders, active: nil)
+        #expect(numbers(out) == [4, 5, 1, 2, 3, 6])
+    }
+
+    @Test func anOpenFolderMovedDownPassesOneRow() {
+        let out = Shelves.moveFolder(work.id, to: 1, pins: pinsFixture, folders: bothFolders, active: nil)
+        #expect(numbers(out) == [3, 1, 2, 4, 5, 6])
+    }
+
+    @Test func movedDownPastAClosedFolderItGoesAfterIt() {
+        let out = Shelves.moveFolder(work.id, to: 2, pins: pinsFixture, folders: bothFolders, active: nil)
+        #expect(numbers(out) == [3, 4, 5, 1, 2, 6])
+    }
+
+    @Test func movedDownIntoAnotherFolderItLandsAfterIt() {
+        // Rows: 0 Side, 1 p1, 2 p2, 3 Work, 4 p3, 5 p4.
+        let pins = [
+            slot(1, kept: true, .pins, folder: side.id),
+            slot(2, kept: true, .pins),
+            slot(3, kept: true, .pins, folder: work.id),
+            slot(4, kept: true, .pins, folder: work.id),
+        ]
+        let out = Shelves.moveFolder(side.id, to: 2, pins: pins, folders: [side, work], active: nil)
+        #expect(numbers(out) == [2, 3, 4, 1])
+    }
+}
+
+@Suite struct PlaceTests {
+    @Test func intoAFolderGoesToItsEnd() {
+        let out = Shelves.place(pinID(3), into: work.id, pins: pinsFixture)
+        #expect(numbers(out) == [1, 2, 3, 4, 5, 6])
+        #expect(folder(of: 3, in: out) == work.id)
+    }
+
+    @Test func intoAClosedFolderGoesToItsEnd() {
+        let out = Shelves.place(pinID(6), into: play.id, pins: pinsFixture)
+        #expect(numbers(out) == [1, 2, 3, 4, 5, 6])
+        #expect(folder(of: 6, in: out) == play.id)
+    }
+
+    @Test func outOfAFolderGoesJustAfterIt() {
+        let out = Shelves.place(pinID(1), into: nil, pins: pinsFixture)
+        #expect(numbers(out) == [2, 1, 3, 4, 5, 6])
+        #expect(folder(of: 1, in: out) == nil)
+    }
+
+    @Test func theLastPinOutOfAFolderStaysWhereItIs() {
+        let pins = [slot(1, kept: true, .pins, folder: work.id), slot(2, kept: true, .pins)]
+        let out = Shelves.place(pinID(1), into: nil, pins: pins)
+        #expect(numbers(out) == [1, 2])
+        #expect(folder(of: 1, in: out) == nil)
+    }
+
+    @Test func outOfNoFolderChangesNothing() {
+        #expect(Shelves.place(pinID(3), into: nil, pins: pinsFixture) == pinsFixture)
+    }
+}

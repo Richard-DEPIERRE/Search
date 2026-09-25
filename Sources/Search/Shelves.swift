@@ -30,6 +30,21 @@ struct Slot: Equatable {
     var folder: UUID?
 }
 
+/// One line of the pinned block as the column draws it: a folder's own row,
+/// or a pin (in a folder, or not). Drags among the pins are measured in these
+/// lines, so they are what the rules below move through.
+enum PinnedRow: Equatable, Identifiable {
+    case folder(UUID)
+    case pin(UUID, folder: UUID?)
+
+    var id: UUID {
+        switch self {
+        case .folder(let id): return id
+        case .pin(let id, _): return id
+        }
+    }
+}
+
 enum Shelves {
     enum Section: Int, Comparable {
         case favorites, pins, loose
@@ -137,5 +152,127 @@ enum Shelves {
     /// trip; any other failure means home isn't coming.
     static func failureEndsTrip(domain: String, code: Int) -> Bool {
         !(domain == NSURLErrorDomain && code == NSURLErrorCancelled)
+    }
+
+    // MARK: - folders of pins
+
+    /// The pins as drawn: each folder's row where its first pin is, then its
+    /// pins while it is open — while it is closed, only the one you are on.
+    /// A pin whose folder isn't there is drawn loose. `pins` is the pins
+    /// section, already tidied (each folder's pins side by side).
+    static func pinnedRows(_ pins: [Slot], folders: [Folder], active: UUID?) -> [PinnedRow] {
+        let open = Dictionary(uniqueKeysWithValues: folders.map { ($0.id, $0.open) })
+        var rows: [PinnedRow] = []
+        var drawn = Set<UUID>()
+        for pin in pins {
+            guard let folder = pin.folder, let isOpen = open[folder] else {
+                rows.append(.pin(pin.id, folder: nil))
+                continue
+            }
+            if !drawn.contains(folder) {
+                drawn.insert(folder)
+                rows.append(.folder(folder))
+            }
+            if isOpen || pin.id == active { rows.append(.pin(pin.id, folder: folder)) }
+        }
+        return rows
+    }
+
+    /// A pin carried to `target` among the drawn rows, and the folder that
+    /// place puts it in: between two pins of a folder, or right under an
+    /// open folder's row, it joins that folder; anywhere else it is loose.
+    /// Past a closed folder it goes after the folder, never into it — Move to
+    /// Folder is the way into one.
+    static func movePin(_ id: UUID, to target: Int, pins: [Slot], folders: [Folder], active: UUID?) -> [Slot] {
+        let rows = pinnedRows(pins, folders: folders, active: active)
+        let from = rows.firstIndex { row in
+            if case .pin(let pin, _) = row { return pin == id }
+            return false
+        }
+        guard let from, rows.indices.contains(target), target != from else { return pins }
+        var rest = rows
+        rest.remove(at: from)
+        let open = Set(folders.filter(\.open).map(\.id))
+        let before = target > 0 ? rest[target - 1] : nil
+        let after = target < rest.count ? rest[target] : nil
+        var joins: UUID?
+        switch before {
+        case .folder(let folder)? where open.contains(folder):
+            joins = folder
+        case .pin(_, let folder?)?:
+            if case .pin(_, let next)? = after, next == folder { joins = folder }
+        default:
+            break
+        }
+        rest.insert(.pin(id, folder: joins), at: target)
+        return expand(rest, pins: pins, folders: folders, moved: id, into: joins)
+    }
+
+    /// A folder's row carried to `target` among the drawn rows, its pins with
+    /// it. It never lands inside another folder: carried down it goes past
+    /// the other folder's pins, carried up it goes before that folder's row.
+    static func moveFolder(_ id: UUID, to target: Int, pins: [Slot], folders: [Folder], active: UUID?) -> [Slot] {
+        let rows = pinnedRows(pins, folders: folders, active: active)
+        guard let from = rows.firstIndex(of: .folder(id)), rows.indices.contains(target), target != from else {
+            return pins
+        }
+        var end = from + 1
+        while end < rows.count, case .pin(_, let folder) = rows[end], folder == id { end += 1 }
+        let block = Array(rows[from..<end])
+        var rest = rows
+        rest.removeSubrange(from..<end)
+        var at = min(max(0, target), rest.count)
+        if at < rest.count, case .pin(_, let other?) = rest[at] {
+            if target > from {
+                while at < rest.count, case .pin(_, let folder) = rest[at], folder == other { at += 1 }
+            } else if let row = rest.firstIndex(of: .folder(other)) {
+                at = row
+            }
+        }
+        rest.insert(contentsOf: block, at: at)
+        return expand(rest, pins: pins, folders: folders, moved: nil, into: nil)
+    }
+
+    /// A pin put into a folder, after its last pin — or, with nil, out of the
+    /// folder it is in, to just after that folder's pins. The last pin out of
+    /// a folder stays where it is: there is nothing left to be after.
+    static func place(_ id: UUID, into folder: UUID?, pins: [Slot]) -> [Slot] {
+        guard let from = pins.firstIndex(where: { $0.id == id }) else { return pins }
+        var moving = pins[from]
+        guard let anchor = folder ?? moving.folder else { return pins }
+        var rest = pins
+        rest.remove(at: from)
+        moving.folder = folder
+        let at = rest.lastIndex { $0.folder == anchor }.map { $0 + 1 } ?? min(from, rest.count)
+        rest.insert(moving, at: at)
+        return rest
+    }
+
+    /// Drawn rows back into the pins' order. A closed folder's pins, drawn or
+    /// not, stand where its row is; every other pin stands where its own row
+    /// is; `moved` takes the folder its new place gave it.
+    private static func expand(_ rows: [PinnedRow], pins: [Slot], folders: [Folder], moved: UUID?, into folder: UUID?) -> [Slot] {
+        let closed = Set(folders.filter { !$0.open }.map(\.id))
+        var order: [Slot] = []
+        var placed = Set<UUID>()
+        for row in rows {
+            switch row {
+            case .folder(let id):
+                guard closed.contains(id) else { continue }
+                for slot in pins where slot.folder == id && slot.id != moved && !placed.contains(slot.id) {
+                    order.append(slot)
+                    placed.insert(slot.id)
+                }
+            case .pin(let id, _):
+                guard !placed.contains(id), var slot = pins.first(where: { $0.id == id }) else { continue }
+                if id == moved { slot.folder = folder }
+                order.append(slot)
+                placed.insert(id)
+            }
+        }
+        // Nothing drawn is missing from the rows, but a pin is never lost to a
+        // drawing: anything left over keeps its place at the end.
+        for slot in pins where !placed.contains(slot.id) { order.append(slot) }
+        return order
     }
 }
