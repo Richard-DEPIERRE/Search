@@ -172,6 +172,7 @@ extension Browser {
         // Which way the icon at the foot turns over: the way the spaces lie.
         if !makingSpace { spaceStep = to > (spaces.firstIndex { $0.id == spaceID } ?? 0) ? 1 : -1 }
         cancelTabEdit()
+        editingFolder = nil
         if floater.showing { land() }
         writeSession(now: true)
 

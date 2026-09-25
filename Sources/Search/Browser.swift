@@ -667,6 +667,112 @@ final class Browser: NSObject, ObservableObject {
         writeSession(now: true)
     }
 
+    // MARK: - folders of pins
+
+    /// The folder whose name is being typed over, in place.
+    @Published var editingFolder: UUID?
+
+    /// The pins section of the row, as the shelf rules see it.
+    private var pinSlots: [Slot] {
+        Browser.slots(of: tabs).filter { Shelves.section(of: $0) == .pins }
+    }
+
+    /// The pins as the column draws them: each folder's row, then its pins
+    /// while it is open (see Shelves.pinnedRows).
+    var pinnedRows: [PinnedRow] {
+        Shelves.pinnedRows(pinSlots, folders: folders, active: activeID)
+    }
+
+    /// A folder made around a pin, open, and named at once.
+    func newFolder(with tab: Tab) {
+        guard tab.pin != nil, tab.shelf == .pins else { return }
+        let folder = Folder(id: UUID(), name: "New Folder", open: true)
+        objectWillChange.send()
+        folders.append(folder)
+        tab.folder = folder.id
+        tidyTabs()
+        editingFolder = folder.id
+        writeSession(now: true)
+    }
+
+    /// Into a folder, after its last pin — or, with nil, out of the one it is
+    /// in, to just after it (see Shelves.place). Into a closed one, it opens,
+    /// so the pin doesn't vanish from under the menu that sent it there.
+    func putInFolder(_ tab: Tab, _ folder: UUID?) {
+        guard tab.pin != nil, tab.shelf == .pins else { return }
+        if let folder, let i = folders.firstIndex(where: { $0.id == folder }), !folders[i].open {
+            folders[i].open = true
+        }
+        reorderPins(Shelves.place(tab.id, into: folder, pins: pinSlots))
+        writeSession(now: true)
+    }
+
+    func beginFolderRename(_ id: UUID) {
+        editingFolder = id
+    }
+
+    /// Typed into the folder's row. Nothing but spaces keeps the old name: a
+    /// folder with no name is a row you couldn't tell from the next.
+    func renameFolder(_ id: UUID, to typed: String) {
+        let name = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, let i = folders.firstIndex(where: { $0.id == id }) else { return }
+        folders[i].name = name
+    }
+
+    func endFolderEdit() {
+        guard editingFolder != nil else { return }
+        editingFolder = nil
+        writeSession(now: true)
+    }
+
+    /// Open or closed, remembered with the space.
+    func toggleFolder(_ id: UUID) {
+        guard let i = folders.firstIndex(where: { $0.id == id }) else { return }
+        folders[i].open.toggle()
+        rememberSession()
+    }
+
+    /// The folder goes; its pins stay where they are, loose.
+    func deleteFolder(_ id: UUID) {
+        objectWillChange.send()
+        if editingFolder == id { editingFolder = nil }
+        for tab in tabs where tab.folder == id { tab.folder = nil }
+        folders.removeAll { $0.id == id }
+        tidyTabs()
+        writeSession(now: true)
+    }
+
+    /// A pin row carried to another line among the pins as drawn.
+    func movePinRow(_ tab: Tab, to row: Int) {
+        reorderPins(Shelves.movePin(tab.id, to: row, pins: pinSlots, folders: folders, active: activeID))
+        rememberSession()
+    }
+
+    /// A folder's row carried to another line, its pins with it.
+    func moveFolderRow(_ id: UUID, to row: Int) {
+        reorderPins(Shelves.moveFolder(id, to: row, pins: pinSlots, folders: folders, active: activeID))
+        rememberSession()
+    }
+
+    /// The pins put in a new order, each with its folder; the favorites and
+    /// the day's tabs are left where they are. The column draws from the
+    /// browser, and a pin that only changed folder would otherwise publish
+    /// nothing.
+    private func reorderPins(_ pins: [Slot]) {
+        let byID = Dictionary(uniqueKeysWithValues: tabs.map { ($0.id, $0) })
+        let pinTabs = pins.compactMap { byID[$0.id] }
+        let start = favoriteCount
+        guard pinTabs.count == pinCount,
+              Set(pinTabs.map(\.id)) == Set(tabs[start..<(start + pinCount)].map(\.id))
+        else { return }
+        objectWillChange.send()
+        for slot in pins where byID[slot.id]?.folder != slot.folder { byID[slot.id]?.folder = slot.folder }
+        var row = tabs
+        row.replaceSubrange(start..<(start + pinTabs.count), with: pinTabs)
+        if row.map(\.id) != tabs.map(\.id) { tabs = row }
+        tidyTabs()
+    }
+
     // MARK: - the address, in the tab itself
 
     /// Clicking the tab you are already on turns it into the address, short

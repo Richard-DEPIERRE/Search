@@ -980,6 +980,20 @@ struct KeptTabCommands: View {
             Button("Remove from Favorites") { browser.unpin(tab) }
         } else {
             Button("Move to Favorites") { browser.keep(tab, on: .favorites) }
+            Button("New Folder with This Pin") { browser.newFolder(with: tab) }
+            // The way into a closed folder, and to the end of any: a drag
+            // reaches only the inside of an open one.
+            let elsewhere = browser.folders.filter { $0.id != tab.folder }
+            if !elsewhere.isEmpty {
+                Menu("Move to Folder") {
+                    ForEach(elsewhere) { folder in
+                        Button(folder.name) { browser.putInFolder(tab, folder.id) }
+                    }
+                }
+            }
+            if tab.folder != nil {
+                Button("Remove from Folder") { browser.putInFolder(tab, nil) }
+            }
             Button("Unpin") { browser.unpin(tab) }
         }
         if tab.pin != nil {
