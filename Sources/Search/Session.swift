@@ -11,11 +11,37 @@ enum Session {
         var pin: String?
         /// The name you gave the tab, when you gave it one.
         var name: String?
+        /// For a kept tab: "favorites" or "pins". Absent in a session from
+        /// before there were two.
+        var shelf: String?
+        /// For a kept tab: the page it goes back to.
+        var home: String?
+        /// For a pin in a folder: the folder's id.
+        var folder: String?
+
+        /// A kept tab from before there were shelves was a card at the top:
+        /// a favorite now, looking exactly as it did. Anything else this
+        /// build doesn't know is read the same way.
+        var keptShelf: Shelf { shelf.flatMap(Shelf.init(rawValue:)) ?? .favorites }
+
+        /// The page a kept tab goes back to. From before there was one: the
+        /// page it was on, which is the page it was put down at.
+        var keptHome: URL? {
+            guard pin != nil else { return nil }
+            return URL(string: home ?? url)
+        }
+
+        var folderID: UUID? {
+            guard pin != nil else { return nil }
+            return folder.flatMap(UUID.init(uuidString:))
+        }
     }
 
     struct Shape: Codable {
         var tabs: [Entry]
         var active: Int
+        /// This space's folders of pins. Absent from sessions without any.
+        var folders: [Folder]?
     }
 
     /// The first space's is the session there always was; each other space
