@@ -526,6 +526,9 @@ private struct PinSquare: View {
                     .fill(hovering ? Palette.hover : Palette.wash.opacity(0.55))
             }
         }
+        .overlay(alignment: .bottom) {
+            if tab.away { AwayDot(size: max(3, scale * 4 / 34)).offset(y: -scale * 3 / 34) }
+        }
         .contentShape(RoundedRectangle(cornerRadius: scale * 9 / 34, style: .continuous))
         .modifier(OneClick(double: live) {
             if live { browser.editLetter(tab) } else { browser.select(tab) }
@@ -537,6 +540,19 @@ private struct PinSquare: View {
         .help(tab.label)
         .animation(Motion.quick, value: hovering)
         .transition(.scale(scale: 0.8).combined(with: .opacity))
+    }
+}
+
+/// Under a favorite that has left its page: a small mark, not a badge —
+/// enough to find the square that isn't where you left it.
+struct AwayDot: View {
+    let size: CGFloat
+
+    var body: some View {
+        Circle()
+            .fill(Palette.muted)
+            .frame(width: size, height: size)
+            .accessibilityLabel("Away from its pinned page")
     }
 }
 

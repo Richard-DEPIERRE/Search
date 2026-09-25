@@ -387,6 +387,9 @@ private struct TabPill: View {
                 .padding(.horizontal, 7)
                 .padding(.vertical, 6)
                 .frame(width: span)
+                .overlay(alignment: .bottom) {
+                    if tab.away { AwayDot(size: 4).offset(y: -2) }
+                }
             } else {
                 loose
             }
@@ -750,11 +753,16 @@ struct TabMenu: View {
 
     var body: some View {
         if tab.pin == nil {
-            Button("Pin") { browser.pin(tab) }
+            Button("Add to Favorites") { browser.pin(tab) }
                 .disabled(tab.isBlank)
         } else {
             Button("Change Letter") { browser.editLetter(tab) }
-            Button("Unpin") { browser.unpin(tab) }
+            Button("Remove from Favorites") { browser.unpin(tab) }
+            Divider()
+            Button("Back to Pinned Page") { browser.goHome(tab) }
+                .disabled(!tab.away)
+            Button("Set Pinned Page to This Page") { browser.setHome(tab) }
+                .disabled(!tab.away || tab.address == nil)
         }
         Divider()
         Button("Rename") { browser.beginTabRename(tab) }
@@ -960,6 +968,27 @@ struct PinField: NSViewRepresentable {
         func controlTextDidEndEditing(_ note: Notification) {
             let browser = browser
             DispatchQueue.main.async { browser.endPinEdit() }
+        }
+    }
+}
+
+/// The Tabs menu's lines for the tab on screen: watched as a tab, so Back to
+/// Pinned Page lights up the moment the page wanders off.
+struct KeptTabCommands: View {
+    @ObservedObject var browser: Browser
+    @ObservedObject var tab: Tab
+
+    var body: some View {
+        if tab.pin == nil {
+            Button("Add to Favorites") { browser.pin(tab) }
+                .disabled(tab.isBlank)
+        } else {
+            Button("Change Letter") { browser.editLetter(tab) }
+            Button("Remove from Favorites") { browser.unpin(tab) }
+            Button("Back to Pinned Page") { browser.goHome(tab) }
+                .disabled(!tab.away)
+            Button("Set Pinned Page to This Page") { browser.setHome(tab) }
+                .disabled(!tab.away || tab.address == nil)
         }
     }
 }

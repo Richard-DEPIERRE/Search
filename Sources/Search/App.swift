@@ -117,13 +117,7 @@ struct SearchApp: App {
                     .keyboardShortcut("k")
                 Divider()
                 if let tab = browser.active {
-                    if tab.pin == nil {
-                        Button("Pin Tab") { browser.pin(tab) }
-                            .disabled(tab.isBlank)
-                    } else {
-                        Button("Change Letter") { browser.editLetter(tab) }
-                        Button("Unpin Tab") { browser.unpin(tab) }
-                    }
+                    KeptTabCommands(browser: browser, tab: tab)
                 }
                 Button("Rename Tab") { if let tab = browser.active { browser.beginTabRename(tab) } }
                     .disabled(browser.active == nil)
