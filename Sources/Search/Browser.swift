@@ -2211,6 +2211,7 @@ extension Browser: WKNavigationDelegate, WKUIDelegate {
         didFailProvisionalNavigation navigation: WKNavigation!,
         withError error: Error
     ) {
+        tab(for: webView)?.tripFailed()
         fail(webView, error)
     }
 
@@ -2234,6 +2235,7 @@ extension Browser: WKNavigationDelegate, WKUIDelegate {
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         guard let tab = tab(for: webView) else { return }
+        tab.committed()
         if tab.id == activeID { linkStatus.dismiss() }
         tab.failure = nil
         tab.typing = false

@@ -413,6 +413,22 @@ final class Tab: ObservableObject, Identifiable {
         go(to: home)
     }
 
+    /// The page has committed. A trip home ends here, and where it arrived,
+    /// the server's redirects already followed, counts as home too. Not
+    /// when loading stops: a load still running when the trip began stops
+    /// first, and the trip would end before home had answered.
+    func committed() {
+        guard homing else { return }
+        homing = false
+        landed = built?.url
+    }
+
+    /// The trip home never arrived: no host, no network. Whatever is
+    /// committed next is you going somewhere, not home.
+    func tripFailed() {
+        homing = false
+    }
+
     /// A name you gave it, in place of whatever the page calls itself. It
     /// stays through navigation: a tab you named is a tab you are keeping for
     /// a job, not for a page.
@@ -534,7 +550,6 @@ final class Tab: ObservableObject, Identifiable {
                     guard fresh.absoluteString != "about:blank" else { return }
                     let moved = fresh.host() != self.address?.host()
                     self.address = fresh
-                    if self.homing { self.landed = fresh }
                     // Kept before it had a page to keep — an extension pinned
                     // it blank: the first real page it reaches is its home.
                     if self.pin != nil, self.home == nil, Shelves.canBeHome(fresh) {
@@ -550,8 +565,6 @@ final class Tab: ObservableObject, Identifiable {
                 MainActor.assumeIsolated {
                     guard let self else { return }
                     self.loading = self.built?.isLoading ?? false
-                    // Arrived: anything after this is you going somewhere.
-                    if !self.loading { self.homing = false }
                 }
             },
             web.observe(\.canGoBack, options: [.new]) { [weak self] _, _ in
