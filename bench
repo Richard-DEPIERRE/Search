@@ -18,7 +18,7 @@
     ./bench submit ID SELECTOR         the form around SELECTOR
     ./bench shot ID [PATH] [WIDTH]     a PNG of the page → its path
     ./bench close ID | all             only tabs the bench opened
-    ./bench keep ID favorites|off      a tab made a favorite, or let go — --test runs only
+    ./bench keep ID favorites|pins|off a tab made a favorite or a pin, moved between them, or let go — --test runs only
     ./bench home ID [go|set]           a kept tab's page: where it is, back to it, or this page as it — --test runs only
     ./bench probe                      the window's own state: panels, modal, windows
     ./bench extensions                 installed extensions, loaded or not, with their warnings
@@ -130,7 +130,7 @@ def main(argv):
         if len(args) != 1: sys.exit(f"usage: bench {verb} ID")
         request["id"] = args[0]
     elif verb == "keep":
-        if len(args) != 2 or args[1] not in ("favorites", "off"): sys.exit("usage: bench keep ID favorites|off")
+        if len(args) != 2 or args[1] not in ("favorites", "pins", "off"): sys.exit("usage: bench keep ID favorites|pins|off")
         request["id"], request["as"] = args
     elif verb == "home":
         if len(args) not in (1, 2) or (len(args) == 2 and args[1] not in ("go", "set")): sys.exit("usage: bench home ID [go|set]")

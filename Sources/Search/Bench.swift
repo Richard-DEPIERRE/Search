@@ -342,8 +342,9 @@ final class Bench {
             guard let tab = find(request, in: browser) else { answer(missing(request)); return }
             switch request["as"] as? String ?? "" {
             case "favorites": browser.keep(tab, on: .favorites)
+            case "pins": browser.keep(tab, on: .pins)
             case "off": browser.unpin(tab)
-            default: answer(["error": "keep needs favorites or off"]); return
+            default: answer(["error": "keep needs favorites, pins or off"]); return
             }
             answer(describe(tab))
 
@@ -1325,7 +1326,7 @@ final class Bench {
 
         default:
             answer(["error": "unknown command “\(verb)”", "commands": [
-                "tabs", "open", "go", "close", "wait", "sleep", "select", "text", "eval", "click", "type", "submit", "shot", "probe", "key", "resize", "hit", "film", "window", "pages", "picture", "place", "field", "bookmark", "menu", "keyeq", "pull", "space", "strip", "column", "fold", "consent", "site", "little", "ui",
+                "tabs", "open", "go", "close", "wait", "sleep", "select", "keep", "home", "text", "eval", "click", "type", "submit", "shot", "probe", "key", "resize", "hit", "film", "window", "pages", "picture", "place", "field", "bookmark", "menu", "keyeq", "pull", "space", "strip", "column", "fold", "consent", "site", "little", "ui",
             ]])
         }
     }
