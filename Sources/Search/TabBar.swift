@@ -977,8 +977,11 @@ struct KeptTabCommands: View {
             Button("Remove from Favorites") { browser.unpin(tab) }
             Button("Back to Pinned Page") { browser.goHome(tab) }
                 .disabled(!tab.away)
+            // Offered away from home, and also to a kept tab with no home
+            // at all — one an extension pinned blank — which could never
+            // get one otherwise.
             Button("Set Pinned Page to This Page") { browser.setHome(tab) }
-                .disabled(!tab.away || tab.address == nil)
+                .disabled(tab.address == nil || (tab.home != nil && !tab.away))
         }
     }
 }
