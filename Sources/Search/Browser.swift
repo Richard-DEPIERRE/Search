@@ -2174,12 +2174,15 @@ extension Browser: WKNavigationDelegate, WKUIDelegate {
         // opens in the peek, as in Arc: the kept tab stays on its own site. A
         // link that asks for a new tab comes through here too, before any
         // window is made. ⌘, ⇧, ⌥ and ⌃ keep their own meanings; a link in a
-        // frame, or in the peek itself, goes as any link does.
+        // frame, or in the peek itself, goes as any link does. Only the tab in
+        // front: a page's own script can "click" a link in a pin behind, and a
+        // peek opening over whatever you are reading is nobody's click. The
+        // site kept is the page on screen, not one still on its way.
         if action.navigationType == .linkActivated,
            action.targetFrame?.isMainFrame ?? true,
            action.modifierFlags.intersection([.shift, .command, .option, .control]).isEmpty,
-           let from = tab(for: webView), from.pin != nil, peekTab == nil,
-           Shelves.opensInPeek(from: webView.url ?? from.address, to: url) {
+           let from = tab(for: webView), from.pin != nil, from.id == activeID, peekTab == nil,
+           Shelves.opensInPeek(from: webView.backForwardList.currentItem?.url ?? webView.url ?? from.address, to: url) {
             decisionHandler(.cancel)
             DispatchQueue.main.async { [weak self] in self?.peek(url, from: from) }
             return

@@ -533,6 +533,18 @@ private func folder(of n: Int, in pins: [Slot]) -> UUID? { pins.first { $0.id ==
         #expect(!Shelves.opensInPeek(from: url("https://github.com/a"), to: url("mailto:someone@example.com")))
     }
 
+    @Test func wwwOnTheLinkIsTheSameHost() {
+        #expect(!Shelves.opensInPeek(from: url("https://github.com/a"), to: url("https://www.github.com/b")))
+    }
+
+    @Test func aPageThatIsNotAWebPageHasNoSiteToKeep() {
+        #expect(!Shelves.opensInPeek(from: url("chrome-extension://abcdef/options.html"), to: url("https://x.com/")))
+    }
+
+    @Test func anotherPortOnTheSameHostStays() {
+        #expect(!Shelves.opensInPeek(from: url("http://localhost:3000/"), to: url("http://localhost:4000/")))
+    }
+
     @Test func noPageYetStays() {
         #expect(!Shelves.opensInPeek(from: nil, to: url("https://x.com/")))
     }

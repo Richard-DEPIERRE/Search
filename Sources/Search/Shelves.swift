@@ -297,14 +297,16 @@ enum Shelves {
     /// compared without case and without a leading "www.", which names the
     /// same site either way. With no page yet there is no site to keep.
     static func opensInPeek(from here: URL?, to there: URL) -> Bool {
-        guard let scheme = there.scheme?.lowercased(), scheme == "http" || scheme == "https",
-              let from = site(here), let to = site(there)
-        else { return false }
+        guard let from = site(here), let to = site(there) else { return false }
         return from != to
     }
 
+    /// A web page's host, as far as "the same site" cares. Anything that isn't
+    /// a web page — an extension's own page, about:blank — has no site.
     private static func site(_ url: URL?) -> String? {
-        guard let host = url?.host()?.lowercased(), !host.isEmpty else { return nil }
+        guard let scheme = url?.scheme?.lowercased(), scheme == "http" || scheme == "https",
+              let host = url?.host()?.lowercased(), !host.isEmpty
+        else { return nil }
         return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
     }
 

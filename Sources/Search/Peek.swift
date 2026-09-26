@@ -15,8 +15,12 @@ import SwiftUI
 // it there, with nothing loaded twice.
 
 extension Browser {
-    /// Shift-click on a link, from a tab in the row.
+    /// A link's page over the tab in the row it came from: a shift-click, or
+    /// a favorite's or a pin's link to another site. One peek at a time — a
+    /// second arriving before the first is up would otherwise leave the first
+    /// loading, and playing, with nothing on screen to stop it.
     func peek(_ url: URL, from tab: Tab) {
+        closePeek()
         let page = Tab(shy: tab.shy)
         prepare(page)
         page.go(to: url)
