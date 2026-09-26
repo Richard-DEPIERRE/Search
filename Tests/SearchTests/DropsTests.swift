@@ -156,6 +156,20 @@ private var areas: DropAreas {
     @Test func nowhereIsNil() {
         #expect(Drops.target(at: CGPoint(x: 5, y: 5), in: areas) == nil)
     }
+
+    @Test func aTabLeavesItsSectionOutsideItOrOverAnotherSplitsRow() {
+        let row = [Split(id: rowSplit, tabs: [id(3), id(4)], widths: [0.5, 0.5])]
+        #expect(Drops.isOut(id(9), from: .today, at: CGPoint(x: 50, y: 214), home: areas.today, areas: areas, splits: row))
+        #expect(Drops.isOut(id(9), from: .today, at: CGPoint(x: 50, y: 60), home: areas.today, areas: areas, splits: row))
+        #expect(Drops.isOut(id(3), from: .pane(split: rowSplit, was: .today), at: CGPoint(x: 50, y: 180), home: nil, areas: areas, splits: row))
+    }
+
+    @Test func insideItsSectionOrOverItsOwnSplitItStays() {
+        let row = [Split(id: rowSplit, tabs: [id(3), id(4)], widths: [0.5, 0.5])]
+        #expect(!Drops.isOut(id(9), from: .today, at: CGPoint(x: 50, y: 180), home: areas.today, areas: areas, splits: row))
+        #expect(!Drops.isOut(id(3), from: .today, at: CGPoint(x: 50, y: 214), home: areas.today, areas: areas, splits: row))
+        #expect(!Drops.isOut(id(9), from: .pin, at: CGPoint(x: 50, y: 125), home: areas.pins, areas: areas, splits: row))
+    }
 }
 
 @Suite struct PinLineTests {

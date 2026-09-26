@@ -58,7 +58,7 @@ final class Carry: ObservableObject {
         case .today: areas.today
         case .pane: nil
         }
-        let out = home.map { !$0.insetBy(dx: -6, dy: -6).contains(point) } ?? true
+        let out = Drops.isOut(tab.id, from: source, at: point, home: home, areas: areas, splits: browser?.splits ?? [])
         if self.tab?.id != tab.id { self.tab = tab }
         if self.source != source { self.source = source }
         hand.point = point

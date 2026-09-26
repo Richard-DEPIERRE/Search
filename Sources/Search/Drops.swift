@@ -146,4 +146,15 @@ extension Drops {
             return nil
         }
     }
+
+    /// Whether a tab carried to `point` has left its own section: outside the
+    /// section's frame, with a little slack, or — for one of today's tabs —
+    /// over the middle of a split's row it isn't in, which is somewhere to drop
+    /// it rather than a place in the order. A pane has no section to leave.
+    static func isOut(_ tab: UUID, from source: DragSource, at point: CGPoint, home: CGRect?, areas: DropAreas, splits: [Split]) -> Bool {
+        guard let home else { return true }
+        guard home.insetBy(dx: -6, dy: -6).contains(point) else { return true }
+        guard source == .today, case .splitRow(let id)? = target(at: point, in: areas) else { return false }
+        return splits.first { $0.id == id }?.tabs.contains(tab) == false
+    }
 }
