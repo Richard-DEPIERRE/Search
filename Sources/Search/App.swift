@@ -328,24 +328,11 @@ struct ContentView: View {
 
     @ViewBuilder
     private var stage: some View {
-        if let tab = browser.active {
+        if let split = browser.activeSplit {
+            SplitStage(browser: browser, split: split)
+        } else if let tab = browser.active {
             Page(tab: tab)
-                .overlay {
-                    if browser.prefs.showsLinks { LinkBubble(status: browser.linkStatus) }
-                }
-                .overlay(alignment: .topTrailing) {
-                    if browser.finding {
-                        FindBar(browser: browser)
-                            .transition(.move(edge: .top).combined(with: .opacity))
-                    }
-                }
-                .overlay(alignment: .topLeading) {
-                    if let asked = browser.suggesting, asked.tab == tab.id {
-                        AccountList(browser: browser, asked: asked)
-                            .transition(.opacity)
-                    }
-                }
-                .animation(Motion.quick, value: browser.suggesting)
+                .modifier(PageOverlays(browser: browser, tab: tab))
         } else {
             Palette.ground
         }
