@@ -45,12 +45,14 @@ final class Carry: ObservableObject {
         var a = areas
         guard let browser else { return a }
         a.favoriteCount = browser.favoriteCount
+        // A well's frame counts only while the wells are open: the last one
+        // reported stays behind after it closes, over rows that are there now.
         if browser.favoriteCount == 0 {
-            a.favorites = favoritesWell
+            a.favorites = wells ? favoritesWell : nil
             a.favoriteStep = .zero
         }
         a.pinCount = browser.pinnedRows.count
-        if browser.pinCount == 0 { a.pins = pinsWell }
+        if browser.pinCount == 0 { a.pins = wells ? pinsWell : nil }
         a.todayCount = browser.todayRows.count
         let ids = Set(browser.splits.map(\.id))
         a.splitRows = a.splitRows.filter { ids.contains($0.key) }
