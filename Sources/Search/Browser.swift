@@ -545,7 +545,11 @@ final class Browser: NSObject, ObservableObject {
 
     /// This space's splits (see Splits.swift): tabs shown side by side. Saved
     /// with its tabs, and parked with them while another space is on screen.
-    @Published var splits: [Split] = []
+    @Published var splits: [Split] = [] {
+        // Who is in a split changed: its today's tabs are gathered again. Only
+        // then — a divider dragged changes widths, not membership.
+        didSet { if oldValue.map(\.tabs) != splits.map(\.tabs) { tidyTabs() } }
+    }
 
     /// The split on screen: the one the tab you are on belongs to.
     var activeSplit: Split? {
@@ -555,6 +559,29 @@ final class Browser: NSObject, ObservableObject {
 
     func split(of tab: Tab) -> Split? {
         Splits.split(containing: tab.id, in: splits)
+    }
+
+    /// Today's rows as the column draws them (see Splits.todayRows).
+    var todayRows: [TodayRow] {
+        Splits.todayRows(tabs.filter { $0.pin == nil }.map(\.id), splits: splits)
+    }
+
+    /// One of today's tabs carried to another line among today's rows as
+    /// drawn, a split's row counting as one line.
+    func moveTodayRow(_ tab: Tab, to row: Int) {
+        let kept = tabs.filter { $0.pin != nil }
+        let loose = tabs.filter { $0.pin == nil }
+        let order = Splits.moveToday(tab.id, toRow: row, loose: loose.map(\.id), splits: splits)
+        guard order != loose.map(\.id) else { return }
+        let byID = Dictionary(uniqueKeysWithValues: loose.map { ($0.id, $0) })
+        tabs = kept + order.compactMap { byID[$0] }
+        rememberSession()
+    }
+
+    /// Separate Split: its tabs back as rows of their own.
+    func separateSplit(_ id: UUID) {
+        splits.removeAll { $0.id == id }
+        rememberSession()
     }
 
     /// A split is looked at whole: its other panes wake with the one on
@@ -670,6 +697,14 @@ final class Browser: NSObject, ObservableObject {
         let (order, kept) = Browser.tidied(tabs, folders: folders)
         if order.map(\.id) != tabs.map(\.id) { tabs = order }
         if kept != folders { folders = kept }
+        // A split's today's tabs side by side, so its one row sits where they
+        // are (see Splits.gathered).
+        let loose = Set(tabs.filter { $0.pin == nil }.map(\.id))
+        let gathered = Splits.gathered(tabs.map(\.id), loose: loose, splits: splits)
+        if gathered != tabs.map(\.id) {
+            let byID = Dictionary(uniqueKeysWithValues: tabs.map { ($0.id, $0) })
+            tabs = gathered.compactMap { byID[$0] }
+        }
         // A folder that went, with its name still being typed over, would
         // leave the rename waiting for a row that will never be drawn.
         if let editing = editingFolder, !folders.contains(where: { $0.id == editing }) {
