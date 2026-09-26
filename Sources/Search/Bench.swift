@@ -409,6 +409,74 @@ final class Bench {
                 }
             }])
 
+        case "split":
+            // Split view driven as its keys and menus would. Changing the
+            // panes changes your window: only on a SEARCH_PROBE run.
+            guard Store.testing else { answer(["error": "split only works on a --test run — it changes your window"]); return }
+            // Where each pane sits in the window, read from its page's own
+            // view: the layout as drawn, not as meant.
+            func respond() {
+                let split = browser.activeSplit
+                answer([
+                    "splits": browser.splits.count,
+                    "active": browser.active.map(Bench.short) ?? "",
+                    "panes": (split?.tabs ?? []).enumerated().map { index, id -> [String: Any] in
+                        let tab = browser.tabs.first { $0.id == id }
+                        let frame = tab?.built.map { $0.convert($0.bounds, to: nil) } ?? .zero
+                        return [
+                            "id": tab.map(Bench.short) ?? "?",
+                            "width": split.map { $0.widths.indices.contains(index) ? $0.widths[index] : 0 } ?? 0,
+                            "x": Double(frame.minX), "w": Double(frame.width),
+                            "focused": id == browser.activeID,
+                        ]
+                    },
+                ])
+            }
+            switch request["what"] as? String ?? "list" {
+            case "new": browser.newSplitPane()
+            case "add":
+                guard let tab = find(request, in: browser) else { answer(missing(request)); return }
+                browser.addToSplit(tab)
+            case "remove":
+                guard let tab = find(request, in: browser) else { answer(missing(request)); return }
+                browser.removeFromSplit(tab)
+            case "focus":
+                guard let tab = find(request, in: browser) else { answer(missing(request)); return }
+                browser.select(tab)
+            case "resize":
+                guard let split = browser.activeSplit else { answer(["error": "no split on screen"]); return }
+                browser.resizeSplit(split.id, divider: request["divider"] as? Int ?? 0, to: request["fraction"] as? Double ?? 0.5)
+            case "even":
+                guard let split = browser.activeSplit else { answer(["error": "no split on screen"]); return }
+                browser.evenSplit(split.id)
+            case "click":
+                // A real left click posted at the centre of a pane, through
+                // the app's event queue — `tap` calls mouseDown on the web
+                // view directly, which bypasses the local event monitor that
+                // click-to-focus relies on, so it can't test that path.
+                guard let split = browser.activeSplit, let index = request["index"] as? Int,
+                      split.tabs.indices.contains(index),
+                      let tab = browser.tabs.first(where: { $0.id == split.tabs[index] }),
+                      let web = tab.built, let window = web.window
+                else { answer(["error": "no split on screen, or index out of range"]); return }
+                let point = web.convert(NSPoint(x: web.bounds.midX, y: web.bounds.midY), to: nil)
+                for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                    if let event = NSEvent.mouseEvent(
+                        with: type, location: point, modifierFlags: [],
+                        timestamp: ProcessInfo.processInfo.systemUptime,
+                        windowNumber: window.windowNumber, context: nil,
+                        eventNumber: 0, clickCount: 1, pressure: 1
+                    ) {
+                        NSApp.postEvent(event, atStart: false)
+                    }
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: respond)
+                return
+            case "list": break
+            default: answer(["error": "split needs new, add, remove, focus, resize, even, click or list"]); return
+            }
+            respond()
+
         case "text":
             guard let tab = find(request, in: browser) else { answer(missing(request)); return }
             house(tab)
@@ -1382,7 +1450,7 @@ final class Bench {
 
         default:
             answer(["error": "unknown command “\(verb)”", "commands": [
-                "tabs", "open", "go", "close", "wait", "sleep", "select", "keep", "home", "folder", "text", "eval", "click", "type", "submit", "shot", "probe", "key", "resize", "hit", "film", "window", "pages", "picture", "place", "field", "bookmark", "menu", "keyeq", "pull", "space", "strip", "column", "fold", "consent", "site", "little", "ui",
+                "tabs", "open", "go", "close", "wait", "sleep", "select", "keep", "home", "folder", "split", "text", "eval", "click", "type", "submit", "shot", "probe", "key", "resize", "hit", "film", "window", "pages", "picture", "place", "field", "bookmark", "menu", "keyeq", "pull", "space", "strip", "column", "fold", "consent", "site", "little", "ui",
             ]])
         }
     }
