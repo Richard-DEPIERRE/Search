@@ -266,8 +266,17 @@ struct SideBar: View {
                 divider
             }
             VStack(spacing: SideBar.gap) {
-                ForEach(rest) { tab in
-                    SideRow(browser: browser, prefs: prefs, tab: tab, live: tab.id == row.active, pill: pill, close: {})
+                ForEach(Splits.todayRows(rest.map(\.id), splits: row.splits)) { line in
+                    switch line {
+                    case .tab(let id):
+                        if let tab = rest.first(where: { $0.id == id }) {
+                            SideRow(browser: browser, prefs: prefs, tab: tab, live: tab.id == row.active, pill: pill, close: {})
+                        }
+                    case .split(let id):
+                        if let split = row.splits.first(where: { $0.id == id }) {
+                            SplitRow(browser: browser, split: split, tabs: row.tabs, interactive: false)
+                        }
+                    }
                 }
             }
             newTab
@@ -284,7 +293,7 @@ struct SideBar: View {
         let gridRows = favorites == 0 ? 0 : (favorites + cols - 1) / cols
         let grid = gridRows == 0 ? 0
             : CGFloat(gridRows) * pinHeight + CGFloat(gridRows - 1) * SideBar.pinGap + 10
-        let loose = CGFloat(browser.tabs.count - browser.pinnedCount) * (SideBar.row + SideBar.gap)
+        let loose = CGFloat(browser.todayRows.count) * (SideBar.row + SideBar.gap)
         return Metrics.strip + grid + pinBlock + loose + SideBar.row + 8
     }
 
@@ -421,24 +430,27 @@ struct SideBar: View {
     // MARK: - the rows
 
     private var loose: some View {
-        VStack(spacing: SideBar.gap) {
+        let rows = browser.todayRows
+        let step = SideBar.row + SideBar.gap
+        return VStack(spacing: SideBar.gap) {
             // See the grid: the drag is measured in the column's space, not
             // the row's, so a row that has just moved keeps its bearings.
-            ForEach(Array(looseTabs.enumerated()), id: \.element.id) { index, tab in
-                let step = SideBar.row + SideBar.gap
-                SideRow(
-                    browser: browser,
-                    prefs: prefs,
-                    tab: tab,
-                    live: tab.id == browser.activeID,
-                    pill: pill,
-                    close: { browser.close(tab) }
-                )
-                // Positions here are among the loose rows; the pinned block
-                // sits in front of them in the real list.
-                .modifier(Carried(index: index, count: looseTabs.count, step: step, vertical: true, space: "rows") {
-                    browser.move(tab, to: $0 + browser.pinnedCount)
-                })
+            // Positions are among today's rows as drawn: a split's row is one
+            // line, and a tab carried past it passes it whole.
+            ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                switch row {
+                case .tab(let id):
+                    if let tab = browser.tabs.first(where: { $0.id == id }) {
+                        SideRow(browser: browser, prefs: prefs, tab: tab, live: tab.id == browser.activeID, pill: pill, close: { browser.close(tab) })
+                        .modifier(Carried(index: index, count: rows.count, step: step, vertical: true, space: "rows") {
+                            browser.moveTodayRow(tab, to: $0)
+                        })
+                    }
+                case .split(let id):
+                    if let split = browser.splits.first(where: { $0.id == id }) {
+                        SplitRow(browser: browser, split: split, tabs: browser.tabs, interactive: true)
+                    }
+                }
             }
         }
         .coordinateSpace(name: "rows")
@@ -1053,5 +1065,103 @@ private struct FolderField: NSViewRepresentable {
             // has already moved the field on.
             if browser.editingFolder == id { browser.endFolderEdit() }
         }
+    }
+}
+
+/// A split as one line among today's tabs: a segment for each pane, left to
+/// right as they sit on screen. A click shows the split with that pane in
+/// front; its cross, or a middle-click, closes that pane's tab.
+private struct SplitRow: View {
+    @ObservedObject var browser: Browser
+    let split: Split
+    /// Where to find the split's tabs: this space's row, or a parked one's.
+    let tabs: [Tab]
+    /// Off for another space's preview, which answers nothing.
+    let interactive: Bool
+
+    private var onScreen: Bool { interactive && browser.activeSplit?.id == split.id }
+
+    var body: some View {
+        GeometryReader { geo in
+            let panes = split.tabs.compactMap { id in tabs.first { $0.id == id } }
+            let each = panes.isEmpty ? geo.size.width : geo.size.width / CGFloat(panes.count)
+            HStack(spacing: 0) {
+                ForEach(Array(panes.enumerated()), id: \.element.id) { index, tab in
+                    if index > 0 {
+                        Rectangle().fill(Palette.hairline).frame(width: 1, height: 14)
+                    }
+                    SplitSegment(browser: browser, tab: tab, split: split, iconOnly: each < 60,
+                                 focused: onScreen && tab.id == browser.activeID, interactive: interactive)
+                        .frame(width: max(0, each - (index > 0 ? 1 : 0)))
+                }
+            }
+        }
+        // SideBar.row is private to SideBar; a split's row outside it uses
+        // the same 28 the rest of this file's rows are drawn with.
+        .frame(height: 28)
+        .background {
+            if onScreen {
+                RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Palette.wash)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Split view")
+    }
+}
+
+/// One pane of a split's row.
+private struct SplitSegment: View {
+    @ObservedObject var browser: Browser
+    @ObservedObject var tab: Tab
+    let split: Split
+    let iconOnly: Bool
+    let focused: Bool
+    let interactive: Bool
+
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Mark(icon: tab.icon, letter: tab.monogram, size: 14)
+            if !iconOnly {
+                Text(tab.label)
+                    .font(.system(size: 12))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .foregroundStyle(focused ? Palette.ink : Palette.muted)
+            }
+            Spacer(minLength: 0)
+            if hovering && interactive && !iconOnly {
+                Image(systemName: "xmark")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(Palette.muted)
+                    .frame(width: 15, height: 15)
+                    .background(Palette.ink.opacity(0.07), in: Circle())
+                    .contentShape(Rectangle())
+                    .onTapGesture { browser.close(tab) }
+            }
+        }
+        .padding(.horizontal, iconOnly ? 0 : 8)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: iconOnly ? .center : .leading)
+        .background {
+            if focused {
+                RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Palette.ink.opacity(0.06)).padding(2)
+            } else if hovering && interactive {
+                RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Palette.hover).padding(2)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { if interactive { browser.select(tab) } }
+        .overlay { if interactive { MiddleClick { browser.close(tab) } } }
+        .onHover { hovering = $0 }
+        .contextMenu {
+            if interactive {
+                TabMenu(browser: browser, tab: tab, close: { browser.close(tab) })
+                Divider()
+                Button("Separate Split") { browser.separateSplit(split.id) }
+            }
+        }
+        .help(tab.label)
+        .animation(Motion.quick, value: hovering)
     }
 }
