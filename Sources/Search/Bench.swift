@@ -380,6 +380,32 @@ final class Bench {
             browser.apply(action, to: tab)
             answer(shelves(of: browser, action: "\(action)"))
 
+        case "carry":
+            // The column's drop path, driven straight on Carry — for
+            // checking what a drag would do without posting one, which
+            // reaches a real DragGesture only unreliably in a test window.
+            // Only on a test run: it moves your tabs.
+            guard Store.testing else { answer(["error": "carry only works on a --test run — it changes your tabs"]); return }
+            if request["end"] as? Bool == true {
+                browser.carry.end()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { answer(self.shelves(of: browser)) }
+                return
+            }
+            guard let tab = find(request, in: browser), let x = request["x"] as? Double, let y = request["y"] as? Double
+            else { answer(["error": "carry needs a tab id and a point, or end"]); return }
+            var source = browser.dragSource(of: tab)
+            if request["pane"] as? Bool == true {
+                guard let split = browser.split(of: tab) else { answer(["error": "that tab is in no split"]); return }
+                source = .pane(split: split.id, was: source)
+            }
+            browser.carry.move(tab, from: source, to: CGPoint(x: x, y: y))
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                var out = self.shelves(of: browser)
+                out["lifted"] = browser.carry.lifted
+                out["target"] = browser.carry.target.map { "\($0)" } ?? ""
+                answer(out)
+            }
+
         case "home":
             // A kept tab's page: where it is, back to it, or this page as it.
             guard Store.testing else { answer(["error": "home only works on a --test run — it changes your tabs"]); return }
@@ -801,7 +827,9 @@ final class Bench {
             // posts its click: pressed at one point of the window, moved in
             // steps, let go at another — counted from the window's top-left, as
             // `hit` counts. `hold` leaves the button down for a look at the
-            // chip; `release` lets it go.
+            // chip; `release` lets it go. A posted drag reaches SwiftUI's own
+            // drag gestures only unreliably in a test window, so `carry` is how
+            // the column's drop path is actually checked.
             guard Store.testing else { answer(["error": "drag only works on a --test run — it moves your tabs"]); return }
             guard let window = Links.window else { answer(["error": "no window"]); return }
             func post(_ type: NSEvent.EventType, _ x: Double, _ y: Double) {
@@ -1562,7 +1590,7 @@ final class Bench {
 
         default:
             answer(["error": "unknown command “\(verb)”", "commands": [
-                "tabs", "open", "go", "close", "wait", "sleep", "select", "keep", "drop", "home", "folder", "split", "text", "eval", "click", "type", "submit", "shot", "probe", "key", "resize", "hit", "areas", "drag", "film", "window", "pages", "picture", "place", "field", "bookmark", "menu", "keyeq", "pull", "space", "strip", "column", "fold", "consent", "site", "little", "ui",
+                "tabs", "open", "go", "close", "wait", "sleep", "select", "keep", "drop", "carry", "home", "folder", "split", "text", "eval", "click", "type", "submit", "shot", "probe", "key", "resize", "hit", "areas", "drag", "film", "window", "pages", "picture", "place", "field", "bookmark", "menu", "keyeq", "pull", "space", "strip", "column", "fold", "consent", "site", "little", "ui",
             ]])
         }
     }

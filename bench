@@ -21,6 +21,9 @@
     ./bench keep ID favorites|pins|off a tab made a favorite or a pin, moved between them, or let go — --test runs only
     ./bench drop ID favorites N|pins N|today N|row ID|left|right|nowhere [pane]
                                        a drop as the column would make it, straight to the rule and the browser — --test runs only
+    ./bench carry ID X Y [pane] | carry end
+                                       the column's drop path driven straight on Carry, without a real drag —
+                                       X Y in the same window coordinates as `areas`; carry end lets go — --test runs only
     ./bench home ID [go|set]           a kept tab's page: where it is, back to it, or this page as it — --test runs only
     ./bench folder new ID NAME | into ID NAME | out ID | toggle NAME | delete NAME | rename NAME NEW
                  | drag ID INDEX | dragfolder NAME INDEX | rows
@@ -162,6 +165,16 @@ def main(argv):
         else:
             sys.exit(usage)
         if pane: request["pane"] = True
+    elif verb == "carry":
+        usage = "usage: bench carry ID X Y [pane] | carry end"
+        if args == ["end"]:
+            request["end"] = True
+        else:
+            pane = bool(args) and args[-1] == "pane"
+            a = args[:-1] if pane else args
+            if len(a) != 3: sys.exit(usage)
+            request["id"], request["x"], request["y"] = a[0], float(a[1]), float(a[2])
+            if pane: request["pane"] = True
     elif verb == "home":
         if len(args) not in (1, 2) or (len(args) == 2 and args[1] not in ("go", "set")): sys.exit("usage: bench home ID [go|set]")
         request["id"] = args[0]
