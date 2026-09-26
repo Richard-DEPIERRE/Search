@@ -91,15 +91,22 @@ struct SplitStage: View {
     }
 
     /// A click in a pane makes it the one you are on. Looked at, never taken:
-    /// the page still gets its click.
+    /// the page still gets its click. What the view under the click really
+    /// is decides, not just where the panes sit — a peek over the split, or
+    /// one of its buttons, is not a pane even where it overlaps one.
     private func watchClicks() {
         guard monitor == nil else { return }
         let browser = browser
         monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { event in
+            // Whatever is drawn on top decides — a peek over the split, its
+            // buttons, a sheet — so the view under the click is asked for,
+            // not just where the panes are.
+            guard let root = event.window?.contentView else { return event }
+            let point = root.superview?.convert(event.locationInWindow, from: nil) ?? event.locationInWindow
+            guard let hit = root.hitTest(point) else { return event }
             let panes = browser.activeSplit?.tabs ?? []
             for tab in browser.tabs where panes.contains(tab.id) {
-                guard let web = tab.built, web.window === event.window else { continue }
-                if web.bounds.contains(web.convert(event.locationInWindow, from: nil)) {
+                if let web = tab.built, hit === web || hit.isDescendant(of: web) {
                     browser.focusPane(tab)
                     break
                 }
