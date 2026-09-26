@@ -7,6 +7,9 @@ import SwiftUI
 //
 // Off unless asked for, in Settings › General: shift-click means other
 // things to some pages, and nobody who doesn't want this should meet it.
+// A favorite or a pin opens one on its own, though, for any plain click
+// that leads to another host (see Browser's decidePolicyFor): a kept tab
+// stays on its site, and what it links to is looked at over it.
 //
 // The page is a tab of its own, only not in the row: keeping it is moving
 // it there, with nothing loaded twice.

@@ -879,6 +879,12 @@ final class Bench {
                 answer(["peek": ""])
                 return
             }
+            // What the peek holds, if one is open, without touching it: how a
+            // script sees that a click on a favorite went there.
+            if request["url"] as? String == "state" {
+                answer(["peek": browser.peekTab?.address?.absoluteString ?? ""])
+                return
+            }
             guard let tab = browser.active, let text = request["url"] as? String, let url = URL(string: text)
             else { answer(["error": "peek needs a tab in front and an address"]); return }
             browser.peek(url, from: tab)

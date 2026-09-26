@@ -2170,6 +2170,20 @@ extension Browser: WKNavigationDelegate, WKUIDelegate {
             decisionHandler(.cancel)
             return
         }
+        // A plain click on a favorite or a pin that leads to another host
+        // opens in the peek, as in Arc: the kept tab stays on its own site. A
+        // link that asks for a new tab comes through here too, before any
+        // window is made. ⌘, ⇧, ⌥ and ⌃ keep their own meanings; a link in a
+        // frame, or in the peek itself, goes as any link does.
+        if action.navigationType == .linkActivated,
+           action.targetFrame?.isMainFrame ?? true,
+           action.modifierFlags.intersection([.shift, .command, .option, .control]).isEmpty,
+           let from = tab(for: webView), from.pin != nil, peekTab == nil,
+           Shelves.opensInPeek(from: webView.url ?? from.address, to: url) {
+            decisionHandler(.cancel)
+            DispatchQueue.main.async { [weak self] in self?.peek(url, from: from) }
+            return
+        }
         // Shift-click, when Settings says so: a peek at the link, over this
         // page (see Peek.swift). Only from a tab in the row — within a peek,
         // a link just goes.

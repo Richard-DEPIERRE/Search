@@ -289,6 +289,25 @@ enum Shelves {
         return folderBetween(slots, at: index)
     }
 
+    // MARK: - links from kept tabs
+
+    /// Whether a link clicked on a favorite or a pin opens in Peek rather than
+    /// taking the tab with it: a web page on another host. The kept tab stays
+    /// on its own site; a link within it goes as any link does. Hosts are
+    /// compared without case and without a leading "www.", which names the
+    /// same site either way. With no page yet there is no site to keep.
+    static func opensInPeek(from here: URL?, to there: URL) -> Bool {
+        guard let scheme = there.scheme?.lowercased(), scheme == "http" || scheme == "https",
+              let from = site(here), let to = site(there)
+        else { return false }
+        return from != to
+    }
+
+    private static func site(_ url: URL?) -> String? {
+        guard let host = url?.host()?.lowercased(), !host.isEmpty else { return nil }
+        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+    }
+
     /// Drawn rows back into the pins' order. A closed folder's pins, drawn or
     /// not, stand where its row is; every other pin stands where its own row
     /// is; `moved` takes the folder its new place gave it.

@@ -508,3 +508,32 @@ private func folder(of n: Int, in pins: [Slot]) -> UUID? { pins.first { $0.id ==
         #expect(Shelves.folderAfterMove(row, at: 1) == nil)
     }
 }
+
+@Suite struct OpensInPeekTests {
+    private func url(_ s: String) -> URL { URL(string: s)! }
+
+    @Test func anotherHostOpensInPeek() {
+        #expect(Shelves.opensInPeek(from: url("https://github.com/a"), to: url("https://x.com/b")))
+    }
+
+    @Test func anotherSubdomainIsAnotherHost() {
+        #expect(Shelves.opensInPeek(from: url("https://mail.google.com/"), to: url("https://docs.google.com/d")))
+    }
+
+    @Test func theSameHostStays() {
+        #expect(!Shelves.opensInPeek(from: url("https://github.com/a"), to: url("https://github.com/b")))
+    }
+
+    @Test func wwwAndCaseAreTheSameHost() {
+        #expect(!Shelves.opensInPeek(from: url("https://www.github.com/a"), to: url("https://github.com/b")))
+        #expect(!Shelves.opensInPeek(from: url("https://GitHub.com/a"), to: url("http://github.com/b")))
+    }
+
+    @Test func aLinkThatIsNotAWebPageStays() {
+        #expect(!Shelves.opensInPeek(from: url("https://github.com/a"), to: url("mailto:someone@example.com")))
+    }
+
+    @Test func noPageYetStays() {
+        #expect(!Shelves.opensInPeek(from: nil, to: url("https://x.com/")))
+    }
+}
