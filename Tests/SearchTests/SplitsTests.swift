@@ -31,6 +31,18 @@ private func near(_ a: [Double], _ b: [Double]) -> Bool { a.count == b.count && 
         #expect(out.count == 1)
         #expect(out[0].tabs == [id(1), id(9)])
     }
+
+    @Test func aTabBesideItselfIsRefused() {
+        #expect(Splits.adding(id(1), beside: id(1), to: []) == nil)
+    }
+
+    @Test func addingKeepsEveryPaneAtTheMinimum() {
+        let out = Splits.adding(id(4), beside: id(1), to: [split([1, 2, 3], [0.12, 0.12, 0.76])])!
+        #expect(out[0].tabs.count == 4)
+        // tidy can leave a pane slightly under the minimum after renormalising; see task-1 report.
+        #expect(out[0].widths.allSatisfy { $0 >= 0.1 })
+        #expect(abs(out[0].widths.reduce(0, +) - 1) < 0.0001)
+    }
 }
 
 @Suite struct SplitRemoveTests {
@@ -64,6 +76,19 @@ private func near(_ a: [Double], _ b: [Double]) -> Bool { a.count == b.count && 
     @Test func evenedGivesEveryPaneTheSame() {
         let out = Splits.evened(splitID, in: [split([1, 2, 3], [0.6, 0.2, 0.2])])
         #expect(near(out[0].widths, [1.0 / 3, 1.0 / 3, 1.0 / 3]))
+    }
+
+    @Test func twoNarrowPanesNeverGoNegative() {
+        let out = Splits.resizing(splitID, divider: 0, to: 0.5, in: [split([1, 2, 3], [0.05, 0.1, 0.85])])
+        #expect(out[0].widths.allSatisfy { $0 >= 0 })
+        #expect(abs(out[0].widths.reduce(0, +) - 1) < 0.0001)
+        #expect(near([out[0].widths[2]], [0.85]))
+    }
+
+    @Test func aDragWithNoPlaceIsIgnored() {
+        let before = [split([1, 2, 3], [0.4, 0.3, 0.3])]
+        let out = Splits.resizing(splitID, divider: 0, to: .nan, in: before)
+        #expect(out == before)
     }
 }
 
@@ -123,5 +148,18 @@ private func near(_ a: [Double], _ b: [Double]) -> Bool { a.count == b.count && 
         #expect(Splits.neighbour(of: id(2), in: splits) == id(1))
         #expect(Splits.neighbour(of: id(1), in: splits) == id(2))
         #expect(Splits.neighbour(of: id(9), in: splits) == nil)
+    }
+
+    @Test func missingWidthsAreEvenedNotDropped() {
+        let out = Splits.restored([SavedSplit(tabs: [0, 1, 2], widths: [0.5, 0.5])], order: [id(1), id(2), id(3)])
+        #expect(out.count == 1)
+        #expect(out[0].tabs == [id(1), id(2), id(3)])
+        #expect(near(out[0].widths, [1.0 / 3, 1.0 / 3, 1.0 / 3]))
+    }
+
+    @Test func aNegativePlaceDrops() {
+        let out = Splits.restored([SavedSplit(tabs: [-1, 0, 1], widths: [0.3, 0.3, 0.4])], order: [id(1), id(2)])
+        #expect(out.count == 1)
+        #expect(out[0].tabs == [id(1), id(2)])
     }
 }

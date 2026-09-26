@@ -33,16 +33,19 @@ enum Splits {
     /// share, the others giving up theirs in proportion, or as a new pair at
     /// halves. Nil when that split is full. A tab in another split leaves it.
     static func adding(_ tab: UUID, beside: UUID, to splits: [Split]) -> [Split]? {
+        guard tab != beside else { return nil }
         var splits = removing(tab, from: splits)
         guard let s = splits.firstIndex(where: { $0.tabs.contains(beside) }) else {
-            return splits + [Split(id: UUID(), tabs: [beside, tab], widths: [0.5, 0.5])]
+            let result = splits + [Split(id: UUID(), tabs: [beside, tab], widths: [0.5, 0.5])]
+            return tidy(result, existing: Set(result.flatMap(\.tabs)))
         }
         guard splits[s].tabs.count < most, let at = splits[s].tabs.firstIndex(of: beside) else { return nil }
         let n = Double(splits[s].tabs.count + 1)
         splits[s].widths = splits[s].widths.map { $0 * (n - 1) / n }
         splits[s].tabs.insert(tab, at: at + 1)
         splits[s].widths.insert(1 / n, at: at + 1)
-        return splits
+        let result = splits
+        return tidy(result, existing: Set(result.flatMap(\.tabs)))
     }
 
     /// A pane taken out: its width goes to the panes beside it, in proportion
@@ -68,11 +71,14 @@ enum Splits {
     /// panes either side of it change, and neither below the minimum.
     static func resizing(_ id: UUID, divider: Int, to fraction: Double, in splits: [Split]) -> [Split] {
         splits.map { split in
-            guard split.id == id, divider >= 0, split.widths.indices.contains(divider + 1) else { return split }
+            guard split.id == id, divider >= 0, fraction.isFinite, split.widths.indices.contains(divider + 1) else { return split }
             var split = split
             let before = split.widths[..<divider].reduce(0, +)
             let both = split.widths[divider] + split.widths[divider + 1]
-            let at = min(max(fraction, before + minimum), before + both - minimum)
+            // Two panes already narrower together than twice the minimum share what they have,
+            // instead of the bounds crossing.
+            let floor = min(minimum, both / 2)
+            let at = min(max(fraction, before + floor), before + both - floor)
             split.widths[divider] = at - before
             split.widths[divider + 1] = both - (at - before)
             return split
@@ -135,9 +141,10 @@ enum Splits {
     /// Saved splits back onto the tabs the session brought back. `order` has
     /// nil where an entry brought no tab back; places that land there drop.
     static func restored(_ saved: [SavedSplit], order: [UUID?]) -> [Split] {
-        let splits = saved.map { saved in
-            let pairs = zip(saved.tabs, saved.widths).compactMap { place, width -> (UUID, Double)? in
+        let splits = saved.map { saved -> Split in
+            let pairs = saved.tabs.enumerated().compactMap { i, place -> (UUID, Double)? in
                 guard order.indices.contains(place), let tab = order[place] else { return nil }
+                let width = saved.widths.indices.contains(i) ? saved.widths[i] : .nan
                 return (tab, width)
             }
             return Split(id: UUID(), tabs: pairs.map(\.0), widths: pairs.map(\.1))
