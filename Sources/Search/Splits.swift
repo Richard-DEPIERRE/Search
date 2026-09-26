@@ -67,6 +67,16 @@ enum Splits {
         }
     }
 
+    /// A tab swapped for another in its place — a page handed from a website
+    /// to an extension's own, or back — keeps its place in its split.
+    static func replacing(_ old: UUID, with new: UUID, in splits: [Split]) -> [Split] {
+        splits.map { split in
+            var split = split
+            split.tabs = split.tabs.map { $0 == old ? new : $0 }
+            return split
+        }
+    }
+
     /// A divider dragged to `fraction` of the split's width: only the two
     /// panes either side of it change, and neither below the minimum.
     static func resizing(_ id: UUID, divider: Int, to fraction: Double, in splits: [Split]) -> [Split] {
@@ -111,10 +121,22 @@ enum Splits {
             }
             guard kept.count >= 2 else { return nil }
             let total = kept.reduce(0) { $0 + $1.1 }
+            var widths = kept.map { $0.1 / total }
+            // Narrow panes are raised to the minimum, and what they need is
+            // taken from the panes above it, in proportion to how far above:
+            // every pane ends at the minimum or more, the widths still add up,
+            // and tidying again changes nothing. Four panes at the minimum
+            // take less than half, so there is always enough to take.
+            let low = widths.indices.filter { widths[$0] < minimum - 1e-9 }
+            if !low.isEmpty {
+                let need = low.reduce(0) { $0 + (minimum - widths[$1]) }
+                let high = widths.indices.filter { !low.contains($0) }
+                let excess = high.reduce(0) { $0 + (widths[$1] - minimum) }
+                for i in low { widths[i] = minimum }
+                if excess > 0 { for i in high { widths[i] -= need * (widths[i] - minimum) / excess } }
+            }
             split.tabs = kept.map(\.0)
-            split.widths = kept.map { max(minimum, $0.1 / total) }
-            let sum = split.widths.reduce(0, +)
-            split.widths = split.widths.map { $0 / sum }
+            split.widths = widths
             return split
         }
     }

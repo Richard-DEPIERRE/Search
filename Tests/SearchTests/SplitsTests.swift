@@ -39,8 +39,7 @@ private func near(_ a: [Double], _ b: [Double]) -> Bool { a.count == b.count && 
     @Test func addingKeepsEveryPaneAtTheMinimum() {
         let out = Splits.adding(id(4), beside: id(1), to: [split([1, 2, 3], [0.12, 0.12, 0.76])])!
         #expect(out[0].tabs.count == 4)
-        // tidy can leave a pane slightly under the minimum after renormalising; see task-1 report.
-        #expect(out[0].widths.allSatisfy { $0 >= 0.1 })
+        #expect(out[0].widths.allSatisfy { $0 >= Splits.minimum - 1e-9 })
         #expect(abs(out[0].widths.reduce(0, +) - 1) < 0.0001)
     }
 }
@@ -59,6 +58,12 @@ private func near(_ a: [Double], _ b: [Double]) -> Bool { a.count == b.count && 
     @Test func aTabInNoSplitChangesNothing() {
         let splits = [split([1, 2], [0.5, 0.5])]
         #expect(Splits.removing(id(7), from: splits) == splits)
+    }
+
+    @Test func aSwappedTabKeepsItsPlace() {
+        let out = Splits.replacing(id(2), with: id(7), in: [split([1, 2, 3], [0.3, 0.4, 0.3])])
+        #expect(out[0].tabs == [id(1), id(7), id(3)])
+        #expect(near(out[0].widths, [0.3, 0.4, 0.3]))
     }
 }
 
@@ -119,6 +124,20 @@ private func near(_ a: [Double], _ b: [Double]) -> Bool { a.count == b.count && 
     @Test func widthsThatDontAddUpAreScaled() {
         let out = Splits.tidy([split([1, 2], [1, 3])], existing: [id(1), id(2)])
         #expect(near(out[0].widths, [0.25, 0.75]))
+    }
+
+    @Test func tidyingTwiceChangesNothing() {
+        let once = Splits.tidy([split([1, 2, 3], [0.05, 0.5, 0.45])], existing: [id(1), id(2), id(3)])
+        let twice = Splits.tidy(once, existing: [id(1), id(2), id(3)])
+        #expect(near(once[0].widths, twice[0].widths))
+        #expect(abs(once[0].widths[0] - Splits.minimum) < 0.0001)
+        #expect(abs(once[0].widths.reduce(0, +) - 1) < 0.0001)
+    }
+
+    @Test func everyPaneEndsAtTheMinimumOrMore() {
+        let out = Splits.tidy([split([1, 2, 3, 4], [0.01, 0.33, 0.33, 0.33])], existing: Set((1...4).map(id)))
+        #expect(out[0].widths.allSatisfy { $0 >= Splits.minimum - 1e-9 })
+        #expect(abs(out[0].widths.reduce(0, +) - 1) < 0.0001)
     }
 }
 

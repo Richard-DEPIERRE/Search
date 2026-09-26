@@ -12,8 +12,9 @@ final class Browser: NSObject, ObservableObject {
         // However a tab goes — closed, an extension's doing, a page closing
         // itself — it leaves its split, and a split left with one pane ends.
         didSet {
-            let tidied = Splits.tidy(splits, existing: Set(tabs.map(\.id)))
-            if tidied != splits { splits = tidied }
+            let existing = Set(tabs.map(\.id))
+            guard splits.contains(where: { !$0.tabs.allSatisfy(existing.contains) }) else { return }
+            splits = Splits.tidy(splits, existing: existing)
         }
     }
     @Published var activeID: Tab.ID? {
@@ -1328,6 +1329,7 @@ final class Browser: NSObject, ObservableObject {
         let url = Browser.page(url)
         let page = Tab(configuration: Browser.extensionConfiguration(for: url))
         prepare(page)
+        splits = Splits.replacing(tab.id, with: page.id, in: splits)
         tabs[index] = page
         page.go(to: url)
         if activeID == tab.id { activeID = page.id; editing = false }
@@ -1553,6 +1555,7 @@ final class Browser: NSObject, ObservableObject {
         }
         prepare(fresh)
         let wasActive = activeID == tab.id
+        splits = Splits.replacing(tab.id, with: fresh.id, in: splits)
         tabs[index] = fresh
         fresh.go(to: url)
         if wasActive { activeID = fresh.id }
