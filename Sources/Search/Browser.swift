@@ -580,6 +580,72 @@ final class Browser: NSObject, ObservableObject {
         rememberSession()
     }
 
+    // MARK: - drops
+
+    /// Which section a tab would be carried out of.
+    func dragSource(of tab: Tab) -> DragSource {
+        guard tab.pin != nil else { return .today }
+        return tab.shelf == .favorites ? .favorite : .pin
+    }
+
+    /// A carried tab let go (see Drops.resolve), through the same doors the
+    /// menus use. A line is where the tab ends up among its new section's
+    /// rows — just before the row that was there.
+    func apply(_ action: DropAction, to tab: Tab) {
+        switch action {
+        case .none:
+            return
+        case .favorite(let at):
+            keep(tab, on: .favorites)
+            move(tab, to: min(at, favoriteCount - 1))
+        case .pin(let at):
+            keep(tab, on: .pins)
+            movePinRow(tab, to: min(at, pinnedRows.count - 1))
+        case .unpin(let at):
+            unpin(tab)
+            moveTodayRow(tab, to: min(at, todayRows.count - 1))
+        case .place(let at):
+            if tab.pin == nil {
+                moveTodayRow(tab, to: min(at, todayRows.count - 1))
+            } else if tab.shelf == .pins {
+                movePinRow(tab, to: min(at, pinnedRows.count - 1))
+            } else {
+                move(tab, to: min(at, favoriteCount - 1))
+            }
+        case .joinSplit(let id):
+            joinSplit(tab, id)
+        case .splitPage(let side):
+            splitPage(tab, side: side)
+        case .leaveSplitThen(let then):
+            removeFromSplit(tab)
+            apply(then, to: tab)
+        }
+    }
+
+    /// A tab dropped on a split's row: its rightmost pane, and that split on
+    /// screen with it in front.
+    func joinSplit(_ tab: Tab, _ id: UUID) {
+        guard !tab.isBlank, let split = splits.first(where: { $0.id == id }), let last = split.tabs.last,
+              let next = Splits.adding(tab.id, beside: last, to: splits)
+        else { NSSound.beep(); return }
+        splits = next
+        tidyTabs()
+        select(tab)
+        rememberSession()
+    }
+
+    /// A tab dropped on one half of the page: a pane on that side of the one
+    /// you are on — into its split, or a new pair with it.
+    func splitPage(_ tab: Tab, side: Side) {
+        guard let active, tab.id != active.id, !tab.isBlank,
+              let next = Splits.adding(tab.id, beside: active.id, onLeft: side == .left, to: splits)
+        else { NSSound.beep(); return }
+        splits = next
+        tidyTabs()
+        focusPane(tab)
+        rememberSession()
+    }
+
     /// A split is looked at whole: its other panes wake with the one on
     /// screen.
     func wakeSplit(of tab: Tab) {

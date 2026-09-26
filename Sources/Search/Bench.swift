@@ -348,6 +348,38 @@ final class Bench {
             }
             answer(describe(tab))
 
+        case "drop":
+            // A drop as the column would make it, straight to the rule and the
+            // browser — the bench can't hold a mouse button. Only on a test run:
+            // it moves your tabs.
+            guard Store.testing else { answer(["error": "drop only works on a --test run — it changes your tabs"]); return }
+            guard let tab = find(request, in: browser) else { answer(missing(request)); return }
+            var source = browser.dragSource(of: tab)
+            if request["pane"] as? Bool == true {
+                guard let split = browser.split(of: tab) else { answer(["error": "that tab is in no split"]); return }
+                source = .pane(split: split.id, was: source)
+            }
+            let index = request["index"] as? Int ?? 0
+            let target: DropTarget?
+            switch request["to"] as? String ?? "" {
+            case "favorites": target = .favorites(index)
+            case "pins": target = .pins(index)
+            case "today": target = .today(index)
+            case "row":
+                guard let ref = (request["row"] as? String)?.lowercased(),
+                      let member = browser.tabs.first(where: { $0.id.uuidString.lowercased().hasPrefix(ref) }),
+                      let split = browser.split(of: member)
+                else { answer(["error": "no split holds that tab"]); return }
+                target = .splitRow(split.id)
+            case "left": target = .page(.left)
+            case "right": target = .page(.right)
+            case "nowhere": target = nil
+            default: answer(["error": "drop needs favorites N, pins N, today N, row ID, left, right or nowhere"]); return
+            }
+            let action = Drops.resolve(source: source, target: target, tab: tab.id, active: browser.activeID, splits: browser.splits)
+            browser.apply(action, to: tab)
+            answer(shelves(of: browser, action: "\(action)"))
+
         case "home":
             // A kept tab's page: where it is, back to it, or this page as it.
             guard Store.testing else { answer(["error": "home only works on a --test run — it changes your tabs"]); return }
@@ -1462,7 +1494,7 @@ final class Bench {
 
         default:
             answer(["error": "unknown command “\(verb)”", "commands": [
-                "tabs", "open", "go", "close", "wait", "sleep", "select", "keep", "home", "folder", "split", "text", "eval", "click", "type", "submit", "shot", "probe", "key", "resize", "hit", "film", "window", "pages", "picture", "place", "field", "bookmark", "menu", "keyeq", "pull", "space", "strip", "column", "fold", "consent", "site", "little", "ui",
+                "tabs", "open", "go", "close", "wait", "sleep", "select", "keep", "drop", "home", "folder", "split", "text", "eval", "click", "type", "submit", "shot", "probe", "key", "resize", "hit", "film", "window", "pages", "picture", "place", "field", "bookmark", "menu", "keyeq", "pull", "space", "strip", "column", "fold", "consent", "site", "little", "ui",
             ]])
         }
     }
@@ -1586,6 +1618,31 @@ final class Bench {
 
     private func missing(_ request: [String: Any]) -> [String: Any] {
         ["error": "no tab “\(request["id"] as? String ?? "")” — see tabs"]
+    }
+
+    /// The column as drawn, section by section, for checking where a drop put
+    /// things.
+    private func shelves(of browser: Browser, action: String? = nil) -> [String: Any] {
+        func short(_ id: UUID) -> String { browser.tabs.first { $0.id == id }.map(Bench.short) ?? "?" }
+        var out: [String: Any] = [
+            "favorites": browser.tabs.filter { $0.pin != nil && $0.shelf == .favorites }.map(Bench.short),
+            "pins": browser.pinnedRows.map { row -> String in
+                switch row {
+                case .folder(let id): return "FOLDER " + (browser.folders.first { $0.id == id }?.name ?? "?")
+                case .pin(let id, let folder): return (folder == nil ? "PIN " : "  PIN ") + short(id)
+                }
+            },
+            "today": browser.todayRows.map { row -> String in
+                switch row {
+                case .tab(let id): return "TAB " + short(id)
+                case .split(let id): return "SPLIT " + (browser.splits.first { $0.id == id }?.tabs ?? []).map(short).joined(separator: "|")
+                }
+            },
+            "splits": browser.splits.map { $0.tabs.map(short).joined(separator: "|") },
+            "active": browser.active.map(Bench.short) ?? "",
+        ]
+        if let action { out["action"] = action }
+        return out
     }
 
     private func describe(_ tab: Tab) -> [String: Any] {
