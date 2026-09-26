@@ -43,21 +43,24 @@ enum Splits {
         splits.first { $0.tabs.contains(tab) }
     }
 
-    /// A tab added as a pane right of `beside`: into its split at an even
-    /// share, the others giving up theirs in proportion, or as a new pair at
-    /// halves. Nil when that split is full. A tab in another split leaves it.
-    static func adding(_ tab: UUID, beside: UUID, to splits: [Split]) -> [Split]? {
+    /// A tab added as a pane right of `beside` — or left of it, `onLeft`:
+    /// into its split at an even share, the others giving up theirs in
+    /// proportion, or as a new pair at halves. Nil when that split is full. A
+    /// tab in another split leaves it.
+    static func adding(_ tab: UUID, beside: UUID, onLeft: Bool = false, to splits: [Split]) -> [Split]? {
         guard tab != beside else { return nil }
         var splits = removing(tab, from: splits)
         guard let s = splits.firstIndex(where: { $0.tabs.contains(beside) }) else {
-            let result = splits + [Split(id: UUID(), tabs: [beside, tab], widths: [0.5, 0.5])]
+            let pair = onLeft ? [tab, beside] : [beside, tab]
+            let result = splits + [Split(id: UUID(), tabs: pair, widths: [0.5, 0.5])]
             return tidy(result, existing: Set(result.flatMap(\.tabs)))
         }
         guard splits[s].tabs.count < most, let at = splits[s].tabs.firstIndex(of: beside) else { return nil }
         let n = Double(splits[s].tabs.count + 1)
+        let place = onLeft ? at : at + 1
         splits[s].widths = splits[s].widths.map { $0 * (n - 1) / n }
-        splits[s].tabs.insert(tab, at: at + 1)
-        splits[s].widths.insert(1 / n, at: at + 1)
+        splits[s].tabs.insert(tab, at: place)
+        splits[s].widths.insert(1 / n, at: place)
         let result = splits
         return tidy(result, existing: Set(result.flatMap(\.tabs)))
     }
