@@ -469,3 +469,42 @@ private func folder(of n: Int, in pins: [Slot]) -> UUID? { pins.first { $0.id ==
         #expect(Shelves.folderBetween(row, at: 1) == nil)
     }
 }
+
+@Suite struct FolderAfterMoveTests {
+    // A pin moved in the flat top bar, still carrying the folder it had.
+
+    @Test func theOnlyPinOfAFolderMovedOnePlaceStaysInIt() {
+        let row = [slot(2, kept: true, .pins), slot(1, kept: true, .pins, folder: work.id)]
+        #expect(Shelves.folderAfterMove(row, at: 1) == work.id)
+    }
+
+    @Test func besideAnotherPinOfItsFolderItStays() {
+        let row = [slot(2, kept: true, .pins, folder: work.id), slot(1, kept: true, .pins, folder: work.id), slot(3, kept: true, .pins)]
+        #expect(Shelves.folderAfterMove(row, at: 1) == work.id)
+    }
+
+    @Test func awayFromAFolderThatStillHasPinsItLeaves() {
+        let row = [slot(2, kept: true, .pins, folder: work.id), slot(3, kept: true, .pins), slot(1, kept: true, .pins, folder: work.id), slot(4, kept: true, .pins)]
+        #expect(Shelves.folderAfterMove(row, at: 2) == nil)
+    }
+
+    @Test func awayFromItsFolderAndBetweenTwoPinsOfAnotherItJoinsThatOne() {
+        let row = [slot(2, kept: true, .pins, folder: work.id), slot(5, kept: true, .pins, folder: play.id), slot(1, kept: true, .pins, folder: work.id), slot(6, kept: true, .pins, folder: play.id)]
+        #expect(Shelves.folderAfterMove(row, at: 2) == play.id)
+    }
+
+    @Test func theOnlyPinOfAFolderDroppedInsideAnotherKeepsItsOwn() {
+        let row = [slot(5, kept: true, .pins, folder: play.id), slot(1, kept: true, .pins, folder: work.id), slot(6, kept: true, .pins, folder: play.id)]
+        #expect(Shelves.folderAfterMove(row, at: 1) == work.id)
+    }
+
+    @Test func aLoosePinBetweenTwoPinsOfAFolderJoinsIt() {
+        let row = [slot(1, kept: true, .pins, folder: work.id), slot(3, kept: true, .pins), slot(2, kept: true, .pins, folder: work.id)]
+        #expect(Shelves.folderAfterMove(row, at: 1) == work.id)
+    }
+
+    @Test func aLoosePinBesideALooseOneAndAPinOfAFolderStaysLoose() {
+        let row = [slot(3, kept: true, .pins), slot(4, kept: true, .pins), slot(5, kept: true, .pins, folder: play.id)]
+        #expect(Shelves.folderAfterMove(row, at: 1) == nil)
+    }
+}

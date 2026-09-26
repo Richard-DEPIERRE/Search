@@ -273,6 +273,22 @@ enum Shelves {
         return folder
     }
 
+    /// The folder a pin moved in the flat top bar ends up in. `slots` is the
+    /// row in its new order, with the moved pin at `index` still carrying the
+    /// folder it had. It keeps that folder beside another of its pins, or when
+    /// it is the folder's only pin — nudging a square and putting it back
+    /// shouldn't cost a folder its name. Otherwise it takes the folder it
+    /// landed between (see folderBetween).
+    static func folderAfterMove(_ slots: [Slot], at index: Int) -> UUID? {
+        guard slots.indices.contains(index) else { return nil }
+        if let own = slots[index].folder {
+            let beside = [index - 1, index + 1].contains { slots.indices.contains($0) && section(of: slots[$0]) == .pins && slots[$0].folder == own }
+            let others = slots.indices.contains { $0 != index && section(of: slots[$0]) == .pins && slots[$0].folder == own }
+            if beside || !others { return own }
+        }
+        return folderBetween(slots, at: index)
+    }
+
     /// Drawn rows back into the pins' order. A closed folder's pins, drawn or
     /// not, stand where its row is; every other pin stands where its own row
     /// is; `moved` takes the folder its new place gave it.

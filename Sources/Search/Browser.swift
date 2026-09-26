@@ -1449,12 +1449,14 @@ final class Browser: NSObject, ObservableObject {
         // the middle of the titles would stop meaning anything.
         guard Shelves.canMove(slots, from: here, to: index) else { return }
         tabs.move(fromOffsets: IndexSet(integer: here), toOffset: index > here ? index + 1 : index)
-        // A pin carried in the top bar, which draws no folder rows, takes the
-        // folder its new place gives it (see Shelves.folderBetween). Left
-        // with its old one, the column would show that folder split in two
-        // until the next tidy quietly put the pin back.
+        // A pin carried in the top bar, which draws no folder rows, keeps its
+        // folder beside another of its pins or while it is the folder's only
+        // pin; anywhere else it takes the folder it landed between, or none
+        // (see Shelves.folderAfterMove). Left with its old one regardless,
+        // the column would show that folder split in two until the next tidy
+        // quietly put the pin back.
         if tab.pin != nil, tab.shelf == .pins, let now = tabs.firstIndex(where: { $0.id == tab.id }) {
-            tab.folder = Shelves.folderBetween(Browser.slots(of: tabs), at: now)
+            tab.folder = Shelves.folderAfterMove(Browser.slots(of: tabs), at: now)
             tidyTabs()
         }
         rememberSession()
