@@ -1161,6 +1161,7 @@ private struct SplitSegment: View {
             }
         }
         .help(tab.label)
+        .accessibilityLabel(tab.label)
         .animation(Motion.quick, value: hovering)
     }
 }

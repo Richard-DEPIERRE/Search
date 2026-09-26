@@ -1602,6 +1602,7 @@ final class Browser: NSObject, ObservableObject {
         prepare(tab)
         leaving()
         tabs.insert(tab, at: min(ghost.index, tabs.count))
+        tidyTabs()
         activeID = tab.id
         editing = false
         typed = ""
@@ -1666,6 +1667,7 @@ final class Browser: NSObject, ObservableObject {
         }
         prepare(tab)
         tabs.insert(tab, at: atEnd ? tabs.count : placeForNew())
+        tidyTabs()
         tab.go(to: url)
         if foreground {
             leaving()
@@ -1878,6 +1880,9 @@ final class Browser: NSObject, ObservableObject {
     /// A tab made outside the row — a peek being kept — put in it at `index`.
     func insert(_ tab: Tab, at index: Int) {
         tabs.insert(tab, at: min(max(0, index), tabs.count))
+        // Without this, a tab placed beside a pane could land between a
+        // split's today's tabs instead of after them.
+        tidyTabs()
         rememberSession()
     }
 
