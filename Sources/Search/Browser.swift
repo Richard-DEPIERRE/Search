@@ -545,11 +545,7 @@ final class Browser: NSObject, ObservableObject {
 
     /// This space's splits (see Splits.swift): tabs shown side by side. Saved
     /// with its tabs, and parked with them while another space is on screen.
-    @Published var splits: [Split] = [] {
-        // Who is in a split changed: its today's tabs are gathered again. Only
-        // then — a divider dragged changes widths, not membership.
-        didSet { if oldValue.map(\.tabs) != splits.map(\.tabs) { tidyTabs() } }
-    }
+    @Published var splits: [Split] = []
 
     /// The split on screen: the one the tab you are on belongs to.
     var activeSplit: Split? {
@@ -606,6 +602,8 @@ final class Browser: NSObject, ObservableObject {
         prepare(tab)
         insert(tab, at: placeForNew())
         splits = next
+        // A new pane joins a split's today's tabs.
+        tidyTabs()
         focusPane(tab)
         editing = true
         focusRequest += 1
@@ -617,6 +615,8 @@ final class Browser: NSObject, ObservableObject {
     /// one pane ends.
     func removeFromSplit(_ tab: Tab) {
         splits = Splits.removing(tab.id, from: splits)
+        // The tab just let go is back among today's loose tabs.
+        tidyTabs()
         rememberSession()
     }
 
@@ -632,6 +632,11 @@ final class Browser: NSObject, ObservableObject {
     func addToSplit(_ tab: Tab) {
         guard canAddToSplit(tab), let active, let next = Splits.adding(tab.id, beside: active.id, to: splits) else { return }
         splits = next
+        // Tidying is explicit here, not from a didSet on splits: tidying
+        // reorders tabs, and some callers of splits = ... (close, replace,
+        // replaceBlank) hold an index into tabs across that assignment, which
+        // a didSet firing mid-operation would invalidate.
+        tidyTabs()
         focusPane(tab)
         rememberSession()
     }
