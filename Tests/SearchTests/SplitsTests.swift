@@ -182,3 +182,64 @@ private func near(_ a: [Double], _ b: [Double]) -> Bool { a.count == b.count && 
         #expect(out[0].tabs == [id(1), id(2)])
     }
 }
+
+private let otherSplitID = UUID(uuidString: "5B000000-0000-0000-0000-000000000002")!
+
+@Suite struct TodayRowsTests {
+    @Test func aSplitIsOneRowWhereItsFirstTodaysTabIs() {
+        let rows = Splits.todayRows([id(1), id(2), id(3), id(4)], splits: [split([2, 4], [0.5, 0.5])])
+        #expect(rows == [.tab(id(1)), .split(splitID), .tab(id(3))])
+    }
+
+    @Test func aSplitOfKeptTabsOnlyIsAtTheTop() {
+        let kept = Split(id: otherSplitID, tabs: [id(7), id(8)], widths: [0.5, 0.5])
+        let rows = Splits.todayRows([id(1), id(2)], splits: [kept])
+        #expect(rows == [.split(otherSplitID), .tab(id(1)), .tab(id(2))])
+    }
+
+    @Test func noSplitsIsJustTheTabs() {
+        #expect(Splits.todayRows([id(1), id(2)], splits: []) == [.tab(id(1)), .tab(id(2))])
+    }
+}
+
+@Suite struct GatheredTests {
+    let order = [id(9), id(1), id(2), id(3), id(4)]
+    let loose: Set<UUID> = [id(1), id(2), id(3), id(4)]
+
+    @Test func aSplitsTodaysTabsComeTogetherWhereTheFirstIs() {
+        #expect(Splits.gathered(order, loose: loose, splits: [split([2, 4], [0.5, 0.5])]) == [id(9), id(1), id(2), id(4), id(3)])
+    }
+
+    @Test func theyGatherInTheOrderTheyStandNotPaneOrder() {
+        #expect(Splits.gathered(order, loose: loose, splits: [split([4, 2], [0.5, 0.5])]) == [id(9), id(1), id(2), id(4), id(3)])
+    }
+
+    @Test func keptTabsAreNeverMoved() {
+        let mixed = [id(7), id(1), id(2), id(3)]
+        #expect(Splits.gathered(mixed, loose: [id(1), id(2), id(3)], splits: [split([7, 3], [0.5, 0.5])]) == mixed)
+    }
+
+    @Test func gatheringTwiceChangesNothing() {
+        let once = Splits.gathered(order, loose: loose, splits: [split([2, 4], [0.5, 0.5])])
+        #expect(Splits.gathered(once, loose: loose, splits: [split([2, 4], [0.5, 0.5])]) == once)
+    }
+}
+
+@Suite struct MoveTodayTests {
+    // Today's rows as drawn: 0 tab 1, 1 split (2, 4), 2 tab 3.
+    let loose = [id(1), id(2), id(4), id(3)]
+    let splits = [split([2, 4], [0.5, 0.5])]
+
+    @Test func aTabMovesToTheRowTheHandIsOn() {
+        #expect(Splits.moveToday(id(3), toRow: 0, loose: loose, splits: splits) == [id(3), id(1), id(2), id(4)])
+    }
+
+    @Test func aTabMovesPastASplitsRowWhole() {
+        #expect(Splits.moveToday(id(1), toRow: 1, loose: loose, splits: splits) == [id(2), id(4), id(1), id(3)])
+    }
+
+    @Test func aSplitsTabOrNowhereChangesNothing() {
+        #expect(Splits.moveToday(id(2), toRow: 0, loose: loose, splits: splits) == loose)
+        #expect(Splits.moveToday(id(1), toRow: 9, loose: loose, splits: splits) == loose)
+    }
+}

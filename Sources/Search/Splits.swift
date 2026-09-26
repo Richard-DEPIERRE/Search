@@ -19,6 +19,20 @@ struct SavedSplit: Codable, Equatable {
     var widths: [Double]
 }
 
+/// One line among today's rows as the column draws them: a tab, or a whole
+/// split as one row.
+enum TodayRow: Equatable, Identifiable {
+    case tab(UUID)
+    case split(UUID)
+
+    var id: UUID {
+        switch self {
+        case .tab(let id): return id
+        case .split(let id): return id
+        }
+    }
+}
+
 enum Splits {
     /// Four columns is as many as a Mac screen reads side by side.
     static let most = 4
@@ -172,5 +186,59 @@ enum Splits {
             return Split(id: UUID(), tabs: pairs.map(\.0), widths: pairs.map(\.1))
         }
         return tidy(splits, existing: Set(order.compactMap { $0 }))
+    }
+
+    // MARK: - a split as one row
+
+    /// Today's rows as drawn: each split once, where its first of today's tabs
+    /// is; a split of favorites and pins only, with none of today's, at the
+    /// top. `loose` is today's tabs in order.
+    static func todayRows(_ loose: [UUID], splits: [Split]) -> [TodayRow] {
+        let present = Set(loose)
+        var rows: [TodayRow] = splits.filter { !$0.tabs.contains(where: present.contains) }.map { .split($0.id) }
+        var drawn = Set<UUID>()
+        for tab in loose {
+            if let split = split(containing: tab, in: splits) {
+                if drawn.insert(split.id).inserted { rows.append(.split(split.id)) }
+            } else {
+                rows.append(.tab(tab))
+            }
+        }
+        return rows
+    }
+
+    /// The row with each split's today's tabs side by side, where the first
+    /// of them stands, in the order they stand. Nothing else moves, and a
+    /// favorite or a pin never does: they have places of their own.
+    static func gathered(_ order: [UUID], loose: Set<UUID>, splits: [Split]) -> [UUID] {
+        var out: [UUID] = []
+        var done = Set<UUID>()
+        for tab in order {
+            guard loose.contains(tab), let split = split(containing: tab, in: splits) else {
+                out.append(tab)
+                continue
+            }
+            guard done.insert(split.id).inserted else { continue }
+            out += order.filter { loose.contains($0) && split.tabs.contains($0) }
+        }
+        return out
+    }
+
+    /// Today's tabs after one of them is carried to `row` among the rows as
+    /// drawn: a split's row counts as one line, and its tabs move as one. A
+    /// tab in a split doesn't move this way — its split's row does not drag.
+    static func moveToday(_ tab: UUID, toRow row: Int, loose: [UUID], splits: [Split]) -> [UUID] {
+        var rows = todayRows(loose, splits: splits)
+        guard let from = rows.firstIndex(of: .tab(tab)), rows.indices.contains(row), row != from else { return loose }
+        rows.remove(at: from)
+        rows.insert(.tab(tab), at: row)
+        return rows.flatMap { line -> [UUID] in
+            switch line {
+            case .tab(let id): return [id]
+            case .split(let id):
+                guard let split = splits.first(where: { $0.id == id }) else { return [] }
+                return loose.filter { split.tabs.contains($0) }
+            }
+        }
     }
 }
