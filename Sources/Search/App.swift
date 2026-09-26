@@ -903,12 +903,16 @@ struct ContentView: View {
 
         // Split view: ⌃⇧= a new pane, ⌃⇧- out of the split, ⌃⇧] and ⌃⇧[
         // between panes. By key code, so the keys are the same on any layout.
+        // With no split on screen, all but ⌃⇧= pass through to the page or an
+        // extension.
         if flags.contains([.control, .shift]), flags.isDisjoint(with: [.command, .option]) {
             switch event.keyCode {
             case 24: browser.newSplitPane(); return true
-            case 27: if let tab = browser.active, browser.split(of: tab) != nil { browser.removeFromSplit(tab) }; return true
-            case 30: browser.stepPane(1); return true
-            case 33: browser.stepPane(-1); return true
+            case 27 where browser.activeSplit != nil:
+                if let tab = browser.active { browser.removeFromSplit(tab) }
+                return true
+            case 30 where browser.activeSplit != nil: browser.stepPane(1); return true
+            case 33 where browser.activeSplit != nil: browser.stepPane(-1); return true
             default: break
             }
         }

@@ -561,7 +561,8 @@ final class Browser: NSObject, ObservableObject {
     /// ready. A full split takes no more, and says so.
     func newSplitPane() {
         guard let beside = active else { return }
-        let tab = Tab()
+        // A pane beside a private tab is private too, as a new tab from one is.
+        let tab = Tab(shy: beside.shy)
         guard let next = Splits.adding(tab.id, beside: beside.id, to: splits) else {
             NSSound.beep()
             return
@@ -571,6 +572,7 @@ final class Browser: NSObject, ObservableObject {
         splits = next
         focusPane(tab)
         editing = true
+        focusRequest += 1
         typed = ""
         rememberSession()
     }
@@ -604,8 +606,16 @@ final class Browser: NSObject, ObservableObject {
     func focusPane(_ tab: Tab) {
         guard activeID != tab.id else { return }
         activeID = tab.id
+        // An address field open on the pane you left closes, as it does
+        // when you select another tab.
+        if editing {
+            editing = false
+            typed = ""
+            summoning = false
+        }
         tab.touch()
         if !tab.wake() { tab.revive() }
+        rememberSession()
     }
 
     /// ⌃⇧] and ⌃⇧[: the next or previous pane of the split on screen.
