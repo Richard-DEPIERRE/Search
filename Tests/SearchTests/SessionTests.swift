@@ -91,4 +91,23 @@ import Testing
         #expect(shape.tabs.count == 1)
         #expect(shape.folders == nil)
     }
+
+    @Test func splitsAreReadBack() throws {
+        let json = """
+        {"tabs":[{"url":"https://a.com/","title":"A"},{"url":"https://b.com/","title":"B"}],"active":0,
+         "splits":[{"tabs":[0,1],"widths":[0.4,0.6]}]}
+        """
+        let shape = try JSONDecoder().decode(Session.Shape.self, from: Data(json.utf8))
+        #expect(shape.splits == [SavedSplit(tabs: [0, 1], widths: [0.4, 0.6])])
+    }
+
+    @Test func aSplitThatWontReadIsDroppedNotTheSession() throws {
+        let json = """
+        {"tabs":[{"url":"https://a.com/","title":"A"}],"active":0,
+         "splits":[{"tabs":[0,1],"widths":[0.5,0.5]},{"tabs":"nonsense"}]}
+        """
+        let shape = try JSONDecoder().decode(Session.Shape.self, from: Data(json.utf8))
+        #expect(shape.tabs.count == 1)
+        #expect(shape.splits?.count == 1)
+    }
 }

@@ -44,6 +44,9 @@ enum Session {
         var active: Int
         /// This space's folders of pins. Absent from sessions without any.
         var folders: [Folder]?
+        /// This space's splits, as places in `tabs` (see Splits.swift). Absent
+        /// from sessions without any.
+        var splits: [SavedSplit]?
     }
 
     /// The first space's is the session there always was; each other space
@@ -99,6 +102,7 @@ extension Session.Shape {
         tabs = try container.decode([Session.Entry].self, forKey: .tabs)
         active = try container.decode(Int.self, forKey: .active)
         folders = (try? container.decodeIfPresent([Lossy<Folder>].self, forKey: .folders))?.compactMap(\.value)
+        splits = (try? container.decodeIfPresent([Lossy<SavedSplit>].self, forKey: .splits))?.compactMap(\.value)
     }
 }
 

@@ -8,7 +8,14 @@ import Combine
 
 @MainActor
 final class Browser: NSObject, ObservableObject {
-    @Published private(set) var tabs: [Tab] = []
+    @Published private(set) var tabs: [Tab] = [] {
+        // However a tab goes — closed, an extension's doing, a page closing
+        // itself — it leaves its split, and a split left with one pane ends.
+        didSet {
+            let tidied = Splits.tidy(splits, existing: Set(tabs.map(\.id)))
+            if tidied != splits { splits = tidied }
+        }
+    }
     @Published var activeID: Tab.ID? {
         didSet {
             // The tab just left is the tab just looked at. Whether a tab has
@@ -535,6 +542,20 @@ final class Browser: NSObject, ObservableObject {
     /// and parked with them while another space is on screen.
     @Published var folders: [Folder] = []
 
+    /// This space's splits (see Splits.swift): tabs shown side by side. Saved
+    /// with its tabs, and parked with them while another space is on screen.
+    @Published var splits: [Split] = []
+
+    /// The split on screen: the one the tab you are on belongs to.
+    var activeSplit: Split? {
+        guard let activeID else { return nil }
+        return Splits.split(containing: activeID, in: splits)
+    }
+
+    func split(of tab: Tab) -> Split? {
+        Splits.split(containing: tab.id, in: splits)
+    }
+
     /// The row as the shelf rules see it.
     private var slots: [Slot] { Browser.slots(of: tabs) }
 
@@ -1051,8 +1072,9 @@ final class Browser: NSObject, ObservableObject {
             }
             return
         }
+        var order: [UUID?] = []
         for entry in saved.tabs {
-            guard let url = URL(string: entry.url) else { continue }
+            guard let url = URL(string: entry.url) else { order.append(nil); continue }
             let tab = Tab()
             prepare(tab)
             tab.restore(url: url, title: entry.title, name: entry.name)
@@ -1061,6 +1083,7 @@ final class Browser: NSObject, ObservableObject {
             tab.remember(home: entry.keptHome)
             tab.folder = entry.folderID
             tabs.append(tab)
+            order.append(tab.id)
         }
         guard !tabs.isEmpty else {
             adopt(Tab())
@@ -1070,6 +1093,7 @@ final class Browser: NSObject, ObservableObject {
         let chosen = tabs[min(max(0, saved.active), tabs.count - 1)]
         activeID = chosen.id
         folders = saved.folders ?? []
+        splits = Splits.restored(saved.splits ?? [], order: order)
         tidyTabs()
         // Only the one you were looking at actually loads.
         chosen.wake()
@@ -1192,6 +1216,7 @@ final class Browser: NSObject, ObservableObject {
     }
 
     func writeSession(now: Bool = false) {
+        var written: [UUID] = []
         Session.write(
             now: now,
             space: spaceID,
@@ -1208,6 +1233,7 @@ final class Browser: NSObject, ObservableObject {
                     let saved = Shelves.savedAddress(
                         address: url, home: tab.home, kept: kept, asleep: tab.asleep, away: tab.away
                     )
+                    written.append(tab.id)
                     return Session.Entry(
                         url: saved.absoluteString, title: tab.title, pin: tab.pin, name: tab.name,
                         shelf: kept ? tab.shelf.rawValue : nil,
@@ -1222,6 +1248,10 @@ final class Browser: NSObject, ObservableObject {
                     let used = Set(tabs.compactMap { $0.pin != nil && $0.shelf == .pins ? $0.folder : nil })
                     let kept = folders.filter { used.contains($0.id) }
                     return kept.isEmpty ? nil : kept
+                }(),
+                splits: {
+                    let saved = Splits.saved(splits, order: written)
+                    return saved.isEmpty ? nil : saved
                 }()
             )
         )
@@ -1664,8 +1694,9 @@ final class Browser: NSObject, ObservableObject {
     func loadRow(_ space: UUID) -> Parked {
         let saved = Session.read(space: space)
         var row: [Tab] = []
+        var order: [UUID?] = []
         for entry in saved.tabs {
-            guard let url = URL(string: entry.url) else { continue }
+            guard let url = URL(string: entry.url) else { order.append(nil); continue }
             let tab = Tab(configuration: Web.configuration(space: space))
             prepare(tab)
             tab.restore(url: url, title: entry.title, name: entry.name)
@@ -1674,15 +1705,17 @@ final class Browser: NSObject, ObservableObject {
             tab.remember(home: entry.keptHome)
             tab.folder = entry.folderID
             row.append(tab)
+            order.append(tab.id)
         }
         let active = row.indices.contains(saved.active) ? row[saved.active].id : row.first?.id
         let (tidy, folders) = Browser.tidied(row, folders: saved.folders ?? [])
-        return Parked(tabs: tidy, active: active, folders: folders)
+        return Parked(tabs: tidy, active: active, folders: folders, splits: Splits.restored(saved.splits ?? [], order: order))
     }
 
     /// Another space's row put on screen in place of this one (see
     /// Spaces.swift) — empty, for one that restores its own.
-    func showRow(_ row: [Tab], active: Tab.ID?, folders: [Folder] = []) {
+    func showRow(_ row: [Tab], active: Tab.ID?, folders: [Folder] = [], splits: [Split] = []) {
+        self.splits = splits
         tabs = row
         self.folders = folders
         activeID = active ?? row.first?.id
