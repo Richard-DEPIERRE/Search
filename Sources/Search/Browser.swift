@@ -557,6 +557,74 @@ final class Browser: NSObject, ObservableObject {
         Splits.split(containing: tab.id, in: splits)
     }
 
+    /// ⌃⇧=: a blank pane right of the tab you are on, its address field
+    /// ready. A full split takes no more, and says so.
+    func newSplitPane() {
+        guard let beside = active else { return }
+        let tab = Tab()
+        guard let next = Splits.adding(tab.id, beside: beside.id, to: splits) else {
+            NSSound.beep()
+            return
+        }
+        prepare(tab)
+        insert(tab, at: placeForNew())
+        splits = next
+        focusPane(tab)
+        editing = true
+        typed = ""
+        rememberSession()
+    }
+
+    /// Out of its split, still open; the others widen, and a split left with
+    /// one pane ends.
+    func removeFromSplit(_ tab: Tab) {
+        splits = Splits.removing(tab.id, from: splits)
+        rememberSession()
+    }
+
+    /// Whether a tab can join the split on screen — or make one with the tab
+    /// you are on.
+    func canAddToSplit(_ tab: Tab) -> Bool {
+        guard let active, tab.id != active.id, !tab.isBlank else { return false }
+        guard let split = activeSplit else { return true }
+        return !split.tabs.contains(tab.id) && split.tabs.count < Splits.most
+    }
+
+    /// A tab added as a pane right of the one you are on.
+    func addToSplit(_ tab: Tab) {
+        guard canAddToSplit(tab), let active, let next = Splits.adding(tab.id, beside: active.id, to: splits) else { return }
+        splits = next
+        focusPane(tab)
+        rememberSession()
+    }
+
+    /// A pane made the one you are on, as a click in it does: without what
+    /// selecting a tab also does — the peek, the reordering, the rest — since
+    /// the split is already on screen.
+    func focusPane(_ tab: Tab) {
+        guard activeID != tab.id else { return }
+        activeID = tab.id
+        tab.touch()
+        if !tab.wake() { tab.revive() }
+    }
+
+    /// ⌃⇧] and ⌃⇧[: the next or previous pane of the split on screen.
+    func stepPane(_ direction: Int) {
+        guard let split = activeSplit, let activeID, let at = split.tabs.firstIndex(of: activeID) else { return }
+        let to = (at + direction + split.tabs.count) % split.tabs.count
+        if let tab = tabs.first(where: { $0.id == split.tabs[to] }) { focusPane(tab) }
+    }
+
+    func resizeSplit(_ id: UUID, divider: Int, to fraction: Double) {
+        splits = Splits.resizing(id, divider: divider, to: fraction, in: splits)
+        rememberSession()
+    }
+
+    func evenSplit(_ id: UUID) {
+        splits = Splits.evened(id, in: splits)
+        rememberSession()
+    }
+
     /// The row as the shelf rules see it.
     private var slots: [Slot] { Browser.slots(of: tabs) }
 
@@ -1353,6 +1421,13 @@ final class Browser: NSObject, ObservableObject {
         // wake is this the other case, one whose page quietly died while you
         // were elsewhere, which revive() checks for on its own.
         if !tab.wake() { tab.revive() }
+        // A split is looked at whole: every pane of it wakes with the one
+        // selected.
+        if let split = split(of: tab) {
+            for other in tabs where other.id != tab.id && split.tabs.contains(other.id) {
+                if !other.wake() { other.revive() }
+            }
+        }
         rememberSession()
         editing = false
         typed = ""
@@ -1362,6 +1437,11 @@ final class Browser: NSObject, ObservableObject {
     /// behind; closing that blank tab closes the window.
     func close(_ tab: Tab) {
         guard let index = tabs.firstIndex(where: { $0.id == tab.id }) else { return }
+
+        // A pane closed or put down leaves its split, and you land on the pane
+        // beside it — not on whichever tab you used last.
+        let beside = activeID == tab.id ? Splits.neighbour(of: tab.id, in: splits) : nil
+        if split(of: tab) != nil { splits = Splits.removing(tab.id, from: splits) }
 
         // A tab whose page is out in the little window takes the window with
         // it. Left alone, the window would go on holding a page belonging to a
@@ -1378,7 +1458,9 @@ final class Browser: NSObject, ObservableObject {
             // bounced between the two instead of getting you out of them.
             let others = tabs.filter { $0.id != tab.id && !$0.asleep }
             let loose = others.filter { $0.pin == nil }
-            if let back = (loose.isEmpty ? others : loose).max(by: { $0.touched < $1.touched }) {
+            if let beside, let pane = tabs.first(where: { $0.id == beside }) {
+                select(pane)
+            } else if let back = (loose.isEmpty ? others : loose).max(by: { $0.touched < $1.touched }) {
                 select(back)
             } else {
                 newTab()
@@ -1410,7 +1492,11 @@ final class Browser: NSObject, ObservableObject {
             // right — through select(), same as everywhere else you land on
             // a tab, so one that was never built yet actually wakes up
             // instead of sitting there blank until a manual reload.
-            select(tabs[min(index, tabs.count - 1)])
+            if let beside, let pane = tabs.first(where: { $0.id == beside }) {
+                select(pane)
+            } else {
+                select(tabs[min(index, tabs.count - 1)])
+            }
         }
         rememberSession()
     }

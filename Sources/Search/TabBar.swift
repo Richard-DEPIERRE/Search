@@ -789,6 +789,11 @@ struct TabMenu: View {
         }
         .disabled(tab.isBlank)
         Button(tab.muted ? "Unmute Tab" : "Mute Tab") { tab.toggleMute() }
+        if browser.split(of: tab) != nil {
+            Button("Remove from Split") { browser.removeFromSplit(tab) }
+        } else if browser.canAddToSplit(tab) {
+            Button("Add to Split") { browser.addToSplit(tab) }
+        }
         Divider()
         Button("Close Tab", action: close)
         Button("Close Other Tabs") { browser.closeOthers(but: tab) }

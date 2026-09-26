@@ -124,6 +124,19 @@ struct SearchApp: App {
                 Button("Duplicate Tab") { browser.duplicate() }
                     .keyboardShortcut("d")
                     .disabled(browser.active?.isBlank ?? true)
+                Divider()
+                Button("New Split Pane") { browser.newSplitPane() }
+                    .keyboardShortcut("=", modifiers: [.control, .shift])
+                    .disabled(browser.active == nil)
+                Button("Remove from Split") { if let tab = browser.active { browser.removeFromSplit(tab) } }
+                    .keyboardShortcut("-", modifiers: [.control, .shift])
+                    .disabled(browser.activeSplit == nil)
+                Button("Next Pane") { browser.stepPane(1) }
+                    .keyboardShortcut("]", modifiers: [.control, .shift])
+                    .disabled(browser.activeSplit == nil)
+                Button("Previous Pane") { browser.stepPane(-1) }
+                    .keyboardShortcut("[", modifiers: [.control, .shift])
+                    .disabled(browser.activeSplit == nil)
                 Button("Copy Address") { browser.copyAddress() }
                     .keyboardShortcut("c", modifiers: [.command, .shift])
                     .disabled(browser.active?.isBlank ?? true)
@@ -886,6 +899,18 @@ struct ContentView: View {
            let number = ContentView.digits[event.keyCode], number > 0 {
             browser.switchSpace(index: number - 1)
             return true
+        }
+
+        // Split view: ⌃⇧= a new pane, ⌃⇧- out of the split, ⌃⇧] and ⌃⇧[
+        // between panes. By key code, so the keys are the same on any layout.
+        if flags.contains([.control, .shift]), flags.isDisjoint(with: [.command, .option]) {
+            switch event.keyCode {
+            case 24: browser.newSplitPane(); return true
+            case 27: if let tab = browser.active, browser.split(of: tab) != nil { browser.removeFromSplit(tab) }; return true
+            case 30: browser.stepPane(1); return true
+            case 33: browser.stepPane(-1); return true
+            default: break
+            }
         }
 
         // A shortcut an extension registered — ⌥⇧D, ⌃⇧Y — before ours, since
