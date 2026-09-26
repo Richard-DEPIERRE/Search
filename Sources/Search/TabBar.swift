@@ -670,6 +670,8 @@ struct Carried: ViewModifier {
                         lifted = false
                     }
             )
+            // Gone mid-drag, with no end to come (see Carry.cancel).
+            .onDisappear { if let lift { lift.carry.cancel(lift.tab) } }
     }
 }
 

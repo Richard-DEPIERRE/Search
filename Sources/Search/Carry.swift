@@ -87,17 +87,27 @@ final class Carry: ObservableObject {
 
     /// The hand let go: dropped where it is, if it was out of its own section.
     func end() {
-        defer {
-            tab = nil
-            source = nil
-            lifted = false
-            target = nil
-            wells = false
-            start = nil
-        }
+        defer { clear() }
         guard lifted, let tab, let source, let browser else { return }
         let action = Drops.resolve(source: source, target: target, tab: tab.id, active: browser.activeID, splits: browser.splits)
         withAnimation(Motion.settle) { browser.apply(action, to: tab) }
+    }
+
+    /// The drag gave out without letting go: the view carrying `tab` went —
+    /// the column folded away, or the tab closed under the hand — and no end
+    /// will come. Nothing is dropped, and the chip goes with it.
+    func cancel(_ tab: Tab) {
+        guard self.tab?.id == tab.id else { return }
+        clear()
+    }
+
+    private func clear() {
+        tab = nil
+        source = nil
+        lifted = false
+        target = nil
+        wells = false
+        start = nil
     }
 }
 

@@ -386,6 +386,7 @@ struct SideBar: View {
                             pinLifted = false
                         }
                 )
+                .onDisappear { carry.cancel(tab) }
             }
         } }
         .coordinateSpace(name: "pins")
@@ -1205,6 +1206,7 @@ private struct SplitSegment: View {
                     if interactive { browser.carry.end() }
                 }
         )
+        .onDisappear { if interactive { browser.carry.cancel(tab) } }
         .onTapGesture { if interactive { browser.select(tab) } }
         .overlay { if interactive { MiddleClick { browser.close(tab) } } }
         .onHover { hovering = $0 }
