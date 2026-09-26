@@ -301,7 +301,6 @@ struct SideBar: View {
 
     private var favoriteTabs: [Tab] { browser.tabs.filter { $0.pin != nil && $0.shelf == .favorites } }
     private var pinTabs: [Tab] { browser.tabs.filter { $0.pin != nil && $0.shelf == .pins } }
-    private var looseTabs: [Tab] { browser.tabs.filter { $0.pin == nil } }
 
     /// Three columns is the block's own shape — up to six pins, that's two
     /// full rows, and one or two is just those same three places with a
