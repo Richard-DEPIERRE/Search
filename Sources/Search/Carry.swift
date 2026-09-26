@@ -73,12 +73,12 @@ final class Carry: ObservableObject {
         case .pane: nil
         }
         let out = Drops.isOut(tab.id, from: source, at: point, home: home, areas: before, splits: browser?.splits ?? [])
-        let clear = out && (home.map { !$0.insetBy(dx: -6, dy: -6).contains(point) } ?? true)
+        let clearOfHome = out && (home.map { !$0.insetBy(dx: -6, dy: -6).contains(point) } ?? true)
         if self.tab?.id != tab.id { self.tab = tab }
         if self.source != source { self.source = source }
         hand.point = point
         if lifted != out { lifted = out }
-        if wells != clear { wells = clear }
+        if wells != clearOfHome { wells = clearOfHome }
         // Where it would land is read from the areas as drawn now, wells and all.
         let now = out ? Drops.target(at: point, in: areas) : nil
         if target != now { target = now }
