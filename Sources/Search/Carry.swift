@@ -17,7 +17,17 @@ final class Carry: ObservableObject {
     /// chip takes over.
     @Published private(set) var lifted = false
     @Published private(set) var target: DropTarget?
+    /// The wells for an empty section are showing: only once the hand is clear
+    /// of its own section. Over another split's row inside today's, a well
+    /// opening above would slide that row out from under the hand.
+    @Published private(set) var wells = false
     let hand = Hand()
+    /// The areas as they were when this drag began, before any well opened.
+    /// Whether the tab is out of its section is judged against these: a well
+    /// opening above a section moves it, and judged against where it moved to,
+    /// the section could come back under the hand, close the well, move back,
+    /// and open it again for as long as the hand stayed there.
+    private var start: DropAreas?
 
     /// Reported by the areas as they are laid out. Not published: read only
     /// when the hand moves or the layer draws.
@@ -52,17 +62,22 @@ final class Carry: ObservableObject {
     @discardableResult
     func move(_ tab: Tab, from source: DragSource, to point: CGPoint) -> Bool {
         let areas = effective
+        if self.tab?.id != tab.id { start = areas }
+        let before = start ?? areas
         let home: CGRect? = switch source {
-        case .favorite: areas.favorites
-        case .pin: areas.pins
-        case .today: areas.today
+        case .favorite: before.favorites
+        case .pin: before.pins
+        case .today: before.today
         case .pane: nil
         }
-        let out = Drops.isOut(tab.id, from: source, at: point, home: home, areas: areas, splits: browser?.splits ?? [])
+        let out = Drops.isOut(tab.id, from: source, at: point, home: home, areas: before, splits: browser?.splits ?? [])
+        let clear = out && (home.map { !$0.insetBy(dx: -6, dy: -6).contains(point) } ?? true)
         if self.tab?.id != tab.id { self.tab = tab }
         if self.source != source { self.source = source }
         hand.point = point
         if lifted != out { lifted = out }
+        if wells != clear { wells = clear }
+        // Where it would land is read from the areas as drawn now, wells and all.
         let now = out ? Drops.target(at: point, in: areas) : nil
         if target != now { target = now }
         return out
@@ -75,6 +90,8 @@ final class Carry: ObservableObject {
             source = nil
             lifted = false
             target = nil
+            wells = false
+            start = nil
         }
         guard lifted, let tab, let source, let browser else { return }
         let action = Drops.resolve(source: source, target: target, tab: tab.id, active: browser.activeID, splits: browser.splits)

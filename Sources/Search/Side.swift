@@ -114,7 +114,7 @@ struct SideBar: View {
         .animation(Motion.settle, value: browser.tabs.map(\.id))
         .animation(Motion.settle, value: browser.pinnedCount)
         .animation(Motion.settle, value: browser.favoriteCount)
-        .animation(Motion.quick, value: carry.lifted)
+        .animation(Motion.quick, value: carry.wells)
     }
 
     /// The column's edge: pull it to make the column wider or narrower,
@@ -194,7 +194,7 @@ struct SideBar: View {
                     if browser.favoriteCount > 0 {
                         pinned
                             .padding(.bottom, 10)
-                    } else if carry.lifted {
+                    } else if carry.wells {
                         DropWell(title: "Favorites", height: SideBar.square)
                             .modifier(ReportFrame { carry.favoritesWell = $0 })
                             .padding(.bottom, 10)
@@ -550,7 +550,7 @@ struct SideBar: View {
             if browser.pinCount > 0 {
                 pinRows
                 divider
-            } else if carry.lifted {
+            } else if carry.wells {
                 DropWell(title: "Pins", height: SideBar.row)
                     .modifier(ReportFrame { carry.pinsWell = $0 })
                 divider
