@@ -815,10 +815,17 @@ final class Bench {
                     NSApp.postEvent(event, atStart: false)
                 }
             }
+            // A mouse-down posted to a window that isn't key is often spent
+            // bringing the window forward instead of starting the drag — so
+            // the window is made key first, and every press waits for that
+            // to have taken effect.
+            let woken = 0.3
+            NSApp.activate(ignoringOtherApps: true)
+            window.makeKeyAndOrderFront(nil)
             if request["release"] as? Bool == true {
                 guard let x = request["x2"] as? Double, let y = request["y2"] as? Double else { answer(["error": "release needs a point"]); return }
-                post(.leftMouseUp, x, y)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { answer(self.shelves(of: browser)) }
+                DispatchQueue.main.asyncAfter(deadline: .now() + woken) { post(.leftMouseUp, x, y) }
+                DispatchQueue.main.asyncAfter(deadline: .now() + woken + 0.6) { answer(self.shelves(of: browser)) }
                 return
             }
             guard let x1 = request["x1"] as? Double, let y1 = request["y1"] as? Double,
@@ -826,14 +833,14 @@ final class Bench {
             else { answer(["error": "drag needs two points"]); return }
             let steps = max(2, request["steps"] as? Int ?? 12)
             let hold = request["hold"] as? Bool == true
-            post(.leftMouseDown, x1, y1)
+            DispatchQueue.main.asyncAfter(deadline: .now() + woken) { post(.leftMouseDown, x1, y1) }
             for i in 1...steps {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.03 * Double(i)) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + woken + 0.03 * Double(i)) {
                     let f = Double(i) / Double(steps)
                     post(.leftMouseDragged, x1 + (x2 - x1) * f, y1 + (y2 - y1) * f)
                 }
             }
-            let end = 0.03 * Double(steps + 2)
+            let end = woken + 0.03 * Double(steps + 2)
             if !hold { DispatchQueue.main.asyncAfter(deadline: .now() + end) { post(.leftMouseUp, x2, y2) } }
             DispatchQueue.main.asyncAfter(deadline: .now() + end + 0.6) {
                 var out = self.shelves(of: browser)
