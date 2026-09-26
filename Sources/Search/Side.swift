@@ -9,6 +9,15 @@ import SwiftUI
 struct SideBar: View {
     @ObservedObject var browser: Browser
     @ObservedObject var prefs: Preferences
+    /// A tab carried out of its section: the wells for an empty section show
+    /// while it is.
+    @ObservedObject var carry: Carry
+
+    init(browser: Browser, prefs: Preferences) {
+        self.browser = browser
+        self.prefs = prefs
+        self.carry = browser.carry
+    }
 
     @Namespace private var pill
 
@@ -365,6 +374,11 @@ struct SideBar: View {
             }
         } }
         .coordinateSpace(name: "pins")
+        .modifier(ReportFrame { frame in
+            carry.areas.favorites = frame
+            carry.areas.favoriteColumns = cols
+            carry.areas.favoriteStep = CGSize(width: width + SideBar.pinGap, height: height + SideBar.pinGap)
+        })
     }
 
     /// The one square actually held stays glued to the fingers; every other
@@ -492,6 +506,7 @@ struct SideBar: View {
             }
         }
         .coordinateSpace(name: "pinRows")
+        .modifier(ReportFrame { carry.areas.pins = $0 })
     }
 
     /// Between the pins and the day's tabs, and only when there are pins.
@@ -520,8 +535,13 @@ struct SideBar: View {
                 pinRows
                 divider
             }
-            loose
-            newTab
+            // Today's rows and the row that makes another, as one place to
+            // drop: letting go over "New tab" puts a tab last.
+            VStack(alignment: .leading, spacing: 0) {
+                loose
+                newTab
+            }
+            .modifier(ReportFrame { carry.areas.today = $0 })
         }
     }
 
@@ -1105,6 +1125,9 @@ private struct SplitRow: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Split view")
+        .modifier(ReportFrame { frame in
+            if interactive { browser.carry.areas.splitRows[split.id] = frame }
+        })
     }
 }
 

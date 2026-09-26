@@ -100,3 +100,76 @@ private func drop(_ source: DragSource, _ target: DropTarget?, _ tab: Int, activ
         #expect(near(out[0].widths, [1.0 / 3, 1.0 / 3, 1.0 / 3]))
     }
 }
+
+private let rowSplit = UUID(uuidString: "5B000000-0000-0000-0000-00000000000D")!
+private let folderID = UUID(uuidString: "5F000000-0000-0000-0000-000000000001")!
+/// Three favorites in a row of three, two pinned rows, three of today's rows
+/// with a split as the second, then the page right of the column.
+private var areas: DropAreas {
+    var a = DropAreas()
+    a.favorites = CGRect(x: 10, y: 50, width: 120, height: 34)
+    a.favoriteColumns = 3
+    a.favoriteStep = CGSize(width: 40, height: 38)
+    a.favoriteCount = 3
+    a.pins = CGRect(x: 10, y: 100, width: 200, height: 60)
+    a.pinCount = 2
+    a.today = CGRect(x: 10, y: 170, width: 200, height: 122)
+    a.todayCount = 3
+    a.splitRows = [rowSplit: CGRect(x: 10, y: 200, width: 200, height: 28)]
+    a.page = CGRect(x: 240, y: 0, width: 800, height: 600)
+    return a
+}
+
+@Suite struct DropAreaTests {
+    @Test func aPointInTheFavoritesIsASlot() {
+        #expect(Drops.target(at: CGPoint(x: 15, y: 60), in: areas) == .favorites(0))
+        #expect(Drops.target(at: CGPoint(x: 75, y: 60), in: areas) == .favorites(2))
+        #expect(Drops.target(at: CGPoint(x: 125, y: 60), in: areas) == .favorites(3))
+    }
+
+    @Test func anEmptyFavoritesWellIsSlotZero() {
+        var a = DropAreas()
+        a.favorites = CGRect(x: 10, y: 50, width: 200, height: 34)
+        #expect(Drops.target(at: CGPoint(x: 100, y: 60), in: a) == .favorites(0))
+    }
+
+    @Test func aPointInThePinsIsALine() {
+        #expect(Drops.target(at: CGPoint(x: 50, y: 101), in: areas) == .pins(0))
+        #expect(Drops.target(at: CGPoint(x: 50, y: 125), in: areas) == .pins(1))
+        #expect(Drops.target(at: CGPoint(x: 50, y: 158), in: areas) == .pins(2))
+    }
+
+    @Test func theMiddleOfASplitsRowIsTheRowItsEdgesALine() {
+        #expect(Drops.target(at: CGPoint(x: 50, y: 214), in: areas) == .splitRow(rowSplit))
+        #expect(Drops.target(at: CGPoint(x: 50, y: 202), in: areas) == .today(1))
+    }
+
+    @Test func belowTheLastRowIsTheEnd() {
+        #expect(Drops.target(at: CGPoint(x: 50, y: 285), in: areas) == .today(3))
+    }
+
+    @Test func thePageIsHalves() {
+        #expect(Drops.target(at: CGPoint(x: 300, y: 300), in: areas) == .page(.left))
+        #expect(Drops.target(at: CGPoint(x: 900, y: 300), in: areas) == .page(.right))
+    }
+
+    @Test func nowhereIsNil() {
+        #expect(Drops.target(at: CGPoint(x: 5, y: 5), in: areas) == nil)
+    }
+}
+
+@Suite struct PinLineTests {
+    let rows: [PinnedRow] = [.folder(folderID), .pin(id(1), folder: folderID), .pin(id(2), folder: folderID), .pin(id(3), folder: nil)]
+
+    @Test func underAnOpenFolderOrBetweenItsPinsIsInIt() {
+        #expect(Drops.pinLineFolder(rows, at: 1, open: [folderID]) == folderID)
+        #expect(Drops.pinLineFolder(rows, at: 2, open: [folderID]) == folderID)
+    }
+
+    @Test func pastAClosedFolderOrAfterItsLastPinIsLoose() {
+        #expect(Drops.pinLineFolder(rows, at: 0, open: [folderID]) == nil)
+        #expect(Drops.pinLineFolder(rows, at: 3, open: [folderID]) == nil)
+        #expect(Drops.pinLineFolder(rows, at: 4, open: [folderID]) == nil)
+        #expect(Drops.pinLineFolder([.folder(folderID)], at: 1, open: []) == nil)
+    }
+}

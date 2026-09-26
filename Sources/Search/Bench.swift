@@ -782,6 +782,20 @@ final class Bench {
             }
             step(1)
 
+        case "areas":
+            // Where the column and the page last said their drop areas are, in
+            // the window from its top-left, as `hit` counts — for aiming a drag.
+            let a = browser.carry.effective
+            func box(_ r: CGRect?) -> Any { r.map { [Double($0.minX), Double($0.minY), Double($0.width), Double($0.height)] } ?? NSNull() }
+            answer([
+                "favorites": box(a.favorites), "favoriteColumns": a.favoriteColumns,
+                "favoriteStep": [Double(a.favoriteStep.width), Double(a.favoriteStep.height)], "favoriteCount": a.favoriteCount,
+                "pins": box(a.pins), "pinCount": a.pinCount,
+                "today": box(a.today), "todayCount": a.todayCount,
+                "splitRows": a.splitRows.values.map { box($0) },
+                "page": box(a.page),
+            ])
+
         case "hit":
             // What a press at a point of the window lands on, and whether
             // AppKit would carry the window off on a drag from there — the
@@ -1494,7 +1508,7 @@ final class Bench {
 
         default:
             answer(["error": "unknown command “\(verb)”", "commands": [
-                "tabs", "open", "go", "close", "wait", "sleep", "select", "keep", "drop", "home", "folder", "split", "text", "eval", "click", "type", "submit", "shot", "probe", "key", "resize", "hit", "film", "window", "pages", "picture", "place", "field", "bookmark", "menu", "keyeq", "pull", "space", "strip", "column", "fold", "consent", "site", "little", "ui",
+                "tabs", "open", "go", "close", "wait", "sleep", "select", "keep", "drop", "home", "folder", "split", "text", "eval", "click", "type", "submit", "shot", "probe", "key", "resize", "hit", "areas", "film", "window", "pages", "picture", "place", "field", "bookmark", "menu", "keyeq", "pull", "space", "strip", "column", "fold", "consent", "site", "little", "ui",
             ]])
         }
     }

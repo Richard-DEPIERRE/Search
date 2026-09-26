@@ -547,6 +547,10 @@ final class Browser: NSObject, ObservableObject {
     /// with its tabs, and parked with them while another space is on screen.
     @Published var splits: [Split] = []
 
+    /// A tab carried out of its section, on its way to be dropped elsewhere
+    /// (see Carry.swift). Not saved: it never outlives the gesture.
+    let carry = Carry()
+
     /// The split on screen: the one the tab you are on belongs to.
     var activeSplit: Split? {
         guard let activeID else { return nil }
@@ -1151,6 +1155,7 @@ final class Browser: NSObject, ObservableObject {
 
     override init() {
         super.init()
+        carry.browser = self
         Shield.shared.enabled = prefs.shielded
         Shield.shared.compile()
         if #available(macOS 15.4, *) { Extensions.shared.start(for: self) }

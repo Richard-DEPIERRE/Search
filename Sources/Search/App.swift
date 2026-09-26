@@ -293,6 +293,7 @@ struct ContentView: View {
             // again thirty times a second, the page juddered along its right
             // edge and overshot the window with the spring (see `room`).
             stage
+                .modifier(ReportFrame { browser.carry.areas.page = $0 })
                 .padding(.leading, roomed.width)
                 .padding(.top, roomed.height)
                 .offset(x: chrome.width - roomed.width, y: chrome.height - roomed.height)

@@ -82,3 +82,68 @@ enum Drops {
         }
     }
 }
+
+/// Where each place a tab can be dropped is in the window, as the column and
+/// the page last reported, with what it takes to tell one line from the next.
+struct DropAreas: Equatable {
+    var favorites: CGRect?
+    var favoriteColumns = 1
+    /// A card and the gap after it, across and down.
+    var favoriteStep = CGSize.zero
+    var favoriteCount = 0
+    var pins: CGRect?
+    /// Pinned rows as drawn, folders included.
+    var pinCount = 0
+    /// Today's rows and the new-tab row under them.
+    var today: CGRect?
+    /// Today's rows as drawn, a split's row counting once.
+    var todayCount = 0
+    var splitRows: [UUID: CGRect] = [:]
+    var page: CGRect?
+    /// A row and the gap under it, in the column.
+    static let step: CGFloat = 30
+}
+
+extension Drops {
+    /// Where the hand is, as a place to drop. The middle of a split's row is
+    /// that row; its top and bottom quarters are the lines above and below it,
+    /// so a tab can still be dropped beside a split rather than into it.
+    static func target(at point: CGPoint, in areas: DropAreas) -> DropTarget? {
+        for (id, frame) in areas.splitRows where frame.insetBy(dx: 0, dy: frame.height / 4).contains(point) {
+            return .splitRow(id)
+        }
+        if let frame = areas.favorites, frame.contains(point) {
+            // An empty well has no cards to go between.
+            guard areas.favoriteStep.width > 0, areas.favoriteStep.height > 0 else { return .favorites(0) }
+            let column = min(max(0, Int(((point.x - frame.minX) / areas.favoriteStep.width).rounded())), areas.favoriteColumns)
+            let row = max(0, Int((point.y - frame.minY) / areas.favoriteStep.height))
+            return .favorites(min(row * areas.favoriteColumns + column, areas.favoriteCount))
+        }
+        if let frame = areas.pins, frame.contains(point) { return .pins(line(point.y, in: frame, count: areas.pinCount)) }
+        if let frame = areas.today, frame.contains(point) { return .today(line(point.y, in: frame, count: areas.todayCount)) }
+        if let frame = areas.page, frame.contains(point) { return .page(point.x < frame.midX ? .left : .right) }
+        return nil
+    }
+
+    /// The line nearest the hand among rows a step apart.
+    private static func line(_ y: CGFloat, in frame: CGRect, count: Int) -> Int {
+        min(max(0, Int(((y - frame.minY) / DropAreas.step).rounded())), count)
+    }
+
+    /// The folder a pin let go at `line` would join, by Shelves.movePin's own
+    /// rule — right under an open folder's row, or between two of a folder's
+    /// pins — so the line can be drawn indented where the drop will indent.
+    static func pinLineFolder(_ rows: [PinnedRow], at line: Int, open: Set<UUID>) -> UUID? {
+        let before = line > 0 && line <= rows.count ? rows[line - 1] : nil
+        let after = line >= 0 && line < rows.count ? rows[line] : nil
+        switch before {
+        case .folder(let folder)? where open.contains(folder):
+            return folder
+        case .pin(_, let folder?)?:
+            if case .pin(_, let next)? = after, next == folder { return folder }
+            return nil
+        default:
+            return nil
+        }
+    }
+}
