@@ -557,6 +557,15 @@ final class Browser: NSObject, ObservableObject {
         Splits.split(containing: tab.id, in: splits)
     }
 
+    /// A split is looked at whole: its other panes wake with the one on
+    /// screen.
+    func wakeSplit(of tab: Tab) {
+        guard let split = split(of: tab) else { return }
+        for other in tabs where other.id != tab.id && split.tabs.contains(other.id) {
+            if !other.wake() { other.revive() }
+        }
+    }
+
     /// ⌃⇧=: a blank pane right of the tab you are on, its address field
     /// ready. A full split takes no more, and says so.
     func newSplitPane() {
@@ -1176,6 +1185,7 @@ final class Browser: NSObject, ObservableObject {
         tidyTabs()
         // Only the one you were looking at actually loads.
         chosen.wake()
+        wakeSplit(of: chosen)
     }
 
     /// The few settings that something else has to be told about. The rest are
@@ -1433,11 +1443,7 @@ final class Browser: NSObject, ObservableObject {
         if !tab.wake() { tab.revive() }
         // A split is looked at whole: every pane of it wakes with the one
         // selected.
-        if let split = split(of: tab) {
-            for other in tabs where other.id != tab.id && split.tabs.contains(other.id) {
-                if !other.wake() { other.revive() }
-            }
-        }
+        wakeSplit(of: tab)
         rememberSession()
         editing = false
         typed = ""

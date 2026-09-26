@@ -189,6 +189,7 @@ extension Browser {
         if let back = parked.removeValue(forKey: id), !back.tabs.isEmpty {
             showRow(back.tabs, active: back.active, folders: back.folders, splits: back.splits)
             if let active, !active.wake() { active.revive() }
+            if let active { wakeSplit(of: active) }
         } else {
             showRow([], active: nil)
             restoreSession()
