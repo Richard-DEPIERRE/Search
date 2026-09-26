@@ -11,11 +11,42 @@ enum Session {
         var pin: String?
         /// The name you gave the tab, when you gave it one.
         var name: String?
+        /// For a kept tab: "favorites" or "pins". Absent in a session from
+        /// before there were two.
+        var shelf: String?
+        /// For a kept tab: the page it goes back to.
+        var home: String?
+        /// For a pin in a folder: the folder's id.
+        var folder: String?
+
+        /// A kept tab from before there were shelves was a card at the top:
+        /// a favorite now, looking exactly as it did. Anything else this
+        /// build doesn't know is read the same way.
+        var keptShelf: Shelf { shelf.flatMap(Shelf.init(rawValue:)) ?? .favorites }
+
+        /// The page a kept tab goes back to. From before there was one: the
+        /// page it was on, which is the page it was put down at. A home that
+        /// won't read as an address falls back the same way, rather than
+        /// leaving the tab with nowhere to go back to.
+        var keptHome: URL? {
+            guard pin != nil else { return nil }
+            return home.flatMap(URL.init(string:)) ?? URL(string: url)
+        }
+
+        var folderID: UUID? {
+            guard pin != nil else { return nil }
+            return folder.flatMap(UUID.init(uuidString:))
+        }
     }
 
     struct Shape: Codable {
         var tabs: [Entry]
         var active: Int
+        /// This space's folders of pins. Absent from sessions without any.
+        var folders: [Folder]?
+        /// This space's splits, as places in `tabs` (see Splits.swift). Absent
+        /// from sessions without any.
+        var splits: [SavedSplit]?
     }
 
     /// The first space's is the session there always was; each other space
@@ -59,5 +90,28 @@ enum Session {
         } else {
             DispatchQueue.global(qos: .utility).async(execute: put)
         }
+    }
+}
+
+extension Session.Shape {
+    /// Read leniently where a hand, or a write cut short, could have left
+    /// something odd: a folder that won't read is dropped, not the session
+    /// with every tab in it. Written the ordinary way.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        tabs = try container.decode([Session.Entry].self, forKey: .tabs)
+        active = try container.decode(Int.self, forKey: .active)
+        folders = (try? container.decodeIfPresent([Lossy<Folder>].self, forKey: .folders))?.compactMap(\.value)
+        splits = (try? container.decodeIfPresent([Lossy<SavedSplit>].self, forKey: .splits))?.compactMap(\.value)
+    }
+}
+
+/// One element of a list that might not read: nil in its place instead of an
+/// error for the whole list.
+private struct Lossy<Value: Decodable>: Decodable {
+    let value: Value?
+
+    init(from decoder: Decoder) throws {
+        value = try? Value(from: decoder)
     }
 }

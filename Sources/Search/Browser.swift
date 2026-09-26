@@ -8,7 +8,15 @@ import Combine
 
 @MainActor
 final class Browser: NSObject, ObservableObject {
-    @Published private(set) var tabs: [Tab] = []
+    @Published private(set) var tabs: [Tab] = [] {
+        // However a tab goes — closed, an extension's doing, a page closing
+        // itself — it leaves its split, and a split left with one pane ends.
+        didSet {
+            let existing = Set(tabs.map(\.id))
+            guard splits.contains(where: { !$0.tabs.allSatisfy(existing.contains) }) else { return }
+            splits = Splits.tidy(splits, existing: existing)
+        }
+    }
     @Published var activeID: Tab.ID? {
         didSet {
             // The tab just left is the tab just looked at. Whether a tab has
@@ -527,21 +535,291 @@ final class Browser: NSObject, ObservableObject {
 
     var pinnedCount: Int { tabs.filter { $0.pin != nil }.count }
 
-    func pin(_ tab: Tab) {
-        if tab.pin == nil {
-            tab.pin = tab.monogram
-            // Pinned tabs live at the head of the row, in the order they were
-            // pinned, so their letters never move under your hand.
-            if let here = tabs.firstIndex(where: { $0.id == tab.id }) {
-                let home = max(0, pinnedCount - 1)
-                if here != home {
-                    tabs.move(
-                        fromOffsets: IndexSet(integer: here),
-                        toOffset: home > here ? home + 1 : home
-                    )
-                }
+    /// The cards at the top of the column, and the rows under them.
+    var favoriteCount: Int { Shelves.count(slots, of: .favorites) }
+    var pinCount: Int { Shelves.count(slots, of: .pins) }
+
+    /// This space's folders of pins (see Shelves.swift). Saved with its tabs,
+    /// and parked with them while another space is on screen.
+    @Published var folders: [Folder] = []
+
+    /// This space's splits (see Splits.swift): tabs shown side by side. Saved
+    /// with its tabs, and parked with them while another space is on screen.
+    @Published var splits: [Split] = []
+
+    /// A tab carried out of its section, on its way to be dropped elsewhere
+    /// (see Carry.swift). Not saved: it never outlives the gesture.
+    let carry = Carry()
+
+    /// The split on screen: the one the tab you are on belongs to.
+    var activeSplit: Split? {
+        guard let activeID else { return nil }
+        return Splits.split(containing: activeID, in: splits)
+    }
+
+    func split(of tab: Tab) -> Split? {
+        Splits.split(containing: tab.id, in: splits)
+    }
+
+    /// Today's rows as the column draws them (see Splits.todayRows).
+    var todayRows: [TodayRow] {
+        Splits.todayRows(tabs.filter { $0.pin == nil }.map(\.id), splits: splits)
+    }
+
+    /// One of today's tabs carried to another line among today's rows as
+    /// drawn, a split's row counting as one line.
+    func moveTodayRow(_ tab: Tab, to row: Int) {
+        let kept = tabs.filter { $0.pin != nil }
+        let loose = tabs.filter { $0.pin == nil }
+        let order = Splits.moveToday(tab.id, toRow: row, loose: loose.map(\.id), splits: splits)
+        guard order != loose.map(\.id) else { return }
+        let byID = Dictionary(uniqueKeysWithValues: loose.map { ($0.id, $0) })
+        tabs = kept + order.compactMap { byID[$0] }
+        rememberSession()
+    }
+
+    /// Separate Split: its tabs back as rows of their own.
+    func separateSplit(_ id: UUID) {
+        splits.removeAll { $0.id == id }
+        rememberSession()
+    }
+
+    // MARK: - drops
+
+    /// Which section a tab would be carried out of.
+    func dragSource(of tab: Tab) -> DragSource {
+        guard tab.pin != nil else { return .today }
+        return tab.shelf == .favorites ? .favorite : .pin
+    }
+
+    /// A carried tab let go (see Drops.resolve), through the same doors the
+    /// menus use. A line is where the tab ends up among its new section's
+    /// rows — just before the row that was there.
+    func apply(_ action: DropAction, to tab: Tab) {
+        switch action {
+        case .none:
+            return
+        case .favorite(let at):
+            keep(tab, on: .favorites)
+            move(tab, to: min(at, favoriteCount - 1))
+        case .pin(let at):
+            keep(tab, on: .pins)
+            movePinRow(tab, to: min(at, pinnedRows.count - 1))
+        case .unpin(let at):
+            unpin(tab)
+            moveTodayRow(tab, to: min(at, todayRows.count - 1))
+        case .place(let at):
+            if tab.pin == nil {
+                moveTodayRow(tab, to: min(at, todayRows.count - 1))
+            } else if tab.shelf == .pins {
+                movePinRow(tab, to: min(at, pinnedRows.count - 1))
+            } else {
+                move(tab, to: min(at, favoriteCount - 1))
             }
+        case .joinSplit(let id):
+            joinSplit(tab, id)
+        case .splitPage(let side):
+            splitPage(tab, side: side)
+        case .leaveSplitThen(let then):
+            removeFromSplit(tab)
+            apply(then, to: tab)
         }
+    }
+
+    /// A tab dropped on a split's row: its rightmost pane, and that split on
+    /// screen with it in front.
+    func joinSplit(_ tab: Tab, _ id: UUID) {
+        guard !tab.isBlank, let split = splits.first(where: { $0.id == id }), let last = split.tabs.last,
+              let next = Splits.adding(tab.id, beside: last, to: splits)
+        else { NSSound.beep(); return }
+        splits = next
+        tidyTabs()
+        select(tab)
+        rememberSession()
+    }
+
+    /// A tab dropped on one half of the page: a pane on that side of the one
+    /// you are on — into its split, or a new pair with it.
+    func splitPage(_ tab: Tab, side: Side) {
+        guard let active, tab.id != active.id, !tab.isBlank,
+              let next = Splits.adding(tab.id, beside: active.id, onLeft: side == .left, to: splits)
+        else { NSSound.beep(); return }
+        splits = next
+        tidyTabs()
+        focusPane(tab)
+        rememberSession()
+    }
+
+    /// A split is looked at whole: its other panes wake with the one on
+    /// screen.
+    func wakeSplit(of tab: Tab) {
+        guard let split = split(of: tab) else { return }
+        for other in tabs where other.id != tab.id && split.tabs.contains(other.id) {
+            if !other.wake() { other.revive() }
+        }
+    }
+
+    /// ⌃⇧=: a blank pane right of the tab you are on, its address field
+    /// ready. A full split takes no more, and says so.
+    func newSplitPane() {
+        guard let beside = active else { return }
+        // A pane beside a private tab is private too, as a new tab from one is.
+        let tab = Tab(shy: beside.shy)
+        guard let next = Splits.adding(tab.id, beside: beside.id, to: splits) else {
+            NSSound.beep()
+            return
+        }
+        prepare(tab)
+        insert(tab, at: placeForNew())
+        splits = next
+        // A new pane joins a split's today's tabs.
+        tidyTabs()
+        focusPane(tab)
+        editing = true
+        focusRequest += 1
+        typed = ""
+        rememberSession()
+    }
+
+    /// Out of its split, still open; the others widen, and a split left with
+    /// one pane ends.
+    func removeFromSplit(_ tab: Tab) {
+        splits = Splits.removing(tab.id, from: splits)
+        // The tab just let go is back among today's loose tabs.
+        tidyTabs()
+        rememberSession()
+    }
+
+    /// Whether a tab can join the split on screen — or make one with the tab
+    /// you are on.
+    func canAddToSplit(_ tab: Tab) -> Bool {
+        guard let active, tab.id != active.id, !tab.isBlank else { return false }
+        guard let split = activeSplit else { return true }
+        return !split.tabs.contains(tab.id) && split.tabs.count < Splits.most
+    }
+
+    /// A tab added as a pane right of the one you are on.
+    func addToSplit(_ tab: Tab) {
+        guard canAddToSplit(tab), let active, let next = Splits.adding(tab.id, beside: active.id, to: splits) else { return }
+        splits = next
+        // Tidying is explicit here, not from a didSet on splits: tidying
+        // reorders tabs, and some callers of splits = ... (close, replace,
+        // replaceBlank) hold an index into tabs across that assignment, which
+        // a didSet firing mid-operation would invalidate.
+        tidyTabs()
+        focusPane(tab)
+        rememberSession()
+    }
+
+    /// A pane made the one you are on, as a click in it does: without what
+    /// selecting a tab also does — the peek, the reordering, the rest — since
+    /// the split is already on screen.
+    func focusPane(_ tab: Tab) {
+        guard activeID != tab.id else { return }
+        activeID = tab.id
+        // An address field open on the pane you left closes, as it does
+        // when you select another tab.
+        if editing {
+            editing = false
+            typed = ""
+            summoning = false
+        }
+        tab.touch()
+        if !tab.wake() { tab.revive() }
+        rememberSession()
+    }
+
+    /// ⌃⇧] and ⌃⇧[: the next or previous pane of the split on screen.
+    func stepPane(_ direction: Int) {
+        guard let split = activeSplit, let activeID, let at = split.tabs.firstIndex(of: activeID) else { return }
+        let to = (at + direction + split.tabs.count) % split.tabs.count
+        if let tab = tabs.first(where: { $0.id == split.tabs[to] }) { focusPane(tab) }
+    }
+
+    func resizeSplit(_ id: UUID, divider: Int, to fraction: Double) {
+        splits = Splits.resizing(id, divider: divider, to: fraction, in: splits)
+        rememberSession()
+    }
+
+    func evenSplit(_ id: UUID) {
+        splits = Splits.evened(id, in: splits)
+        rememberSession()
+    }
+
+    /// The row as the shelf rules see it.
+    private var slots: [Slot] { Browser.slots(of: tabs) }
+
+    static func slots(of row: [Tab]) -> [Slot] {
+        row.map { Slot(id: $0.id, kept: $0.pin != nil, shelf: $0.shelf, folder: $0.folder) }
+    }
+
+    /// A row put in its order — favorites, pins with each folder's together,
+    /// then the rest — and the folders still holding something. For a row
+    /// on screen or one being made for a space that isn't.
+    static func tidied(_ row: [Tab], folders: [Folder]) -> (tabs: [Tab], folders: [Folder]) {
+        let (order, kept) = Shelves.tidy(slots(of: row), folders: folders)
+        let byID = Dictionary(uniqueKeysWithValues: row.map { ($0.id, $0) })
+        let tabs = order.compactMap { slot -> Tab? in
+            guard let tab = byID[slot.id] else { return nil }
+            if tab.folder != slot.folder { tab.folder = slot.folder }
+            return tab
+        }
+        return (tabs, kept)
+    }
+
+    /// After anything that changes which tabs are kept, or where.
+    func tidyTabs() {
+        let (order, kept) = Browser.tidied(tabs, folders: folders)
+        if order.map(\.id) != tabs.map(\.id) { tabs = order }
+        if kept != folders { folders = kept }
+        // A split's today's tabs side by side, so its one row sits where they
+        // are (see Splits.gathered).
+        let loose = Set(tabs.filter { $0.pin == nil }.map(\.id))
+        let gathered = Splits.gathered(tabs.map(\.id), loose: loose, splits: splits)
+        if gathered != tabs.map(\.id) {
+            let byID = Dictionary(uniqueKeysWithValues: tabs.map { ($0.id, $0) })
+            tabs = gathered.compactMap { byID[$0] }
+        }
+        // A folder that went, with its name still being typed over, would
+        // leave the rename waiting for a row that will never be drawn.
+        if let editing = editingFolder, !folders.contains(where: { $0.id == editing }) {
+            editingFolder = nil
+        }
+    }
+
+    /// A tab made a favorite or a pin, or a kept one moved from one shelf to
+    /// the other. Everything that keeps a tab comes through here: the menus,
+    /// an extension pinning one (a favorite, as a pinned tab has always been),
+    /// the bench.
+    func keep(_ tab: Tab, on shelf: Shelf) {
+        if tab.pin == nil {
+            // The column draws its rows from this object, not from the tab's
+            // own publisher, and a move that leaves the row's order alone —
+            // the first loose tab pinned, say — would otherwise tell nobody
+            // to redraw it.
+            objectWillChange.send()
+            tab.pin = tab.monogram
+            tab.shelf = shelf
+            // The page it is on is the page it goes back to — when it is on a
+            // page. An extension can pin a tab still at about:blank; that
+            // one takes its first real page as home instead (Tab's `\.url`).
+            tab.remember(home: Shelves.canBeHome(tab.address) ? tab.address : nil)
+        } else if tab.shelf != shelf {
+            // Same reasoning: moving a favorite to the pins or back can keep
+            // every tab's place in the row, and only this send tells the
+            // column to look again.
+            objectWillChange.send()
+            if editingPin == tab.id { editingPin = nil }
+            if editingTab == tab.id { cancelTabEdit() }
+            tab.shelf = shelf
+            // Folders hold pins only.
+            tab.folder = nil
+        }
+        // Tidying leaves every other tab where it is: one newly kept goes to
+        // the end of its shelf, a favorite moved down becomes the first pin,
+        // a pin moved up the last favorite — the places nearest where each
+        // already stood.
+        tidyTabs()
         // No dialog and no waiting cursor: the letter is taken from the
         // address and applied. Changing it is a separate act, for the day it
         // matters — which is why it is not folded into this one.
@@ -550,7 +828,9 @@ final class Browser: NSObject, ObservableObject {
 
     /// Change Letter, or a double-click on the square itself.
     func editLetter(_ tab: Tab) {
-        guard tab.pin != nil else { return }
+        // A pin is a row with its title; only a favorite wears a letter. The
+        // top bar draws both as squares, and a double-click there is for this.
+        guard tab.pin != nil, tab.shelf == .favorites else { return }
         editingPin = tab.id
     }
 
@@ -571,16 +851,153 @@ final class Browser: NSObject, ObservableObject {
 
     func unpin(_ tab: Tab) {
         if editingPin == tab.id { editingPin = nil }
+        if tab.pin != nil {
+            // As in keep(_:on:): unpinning the last pin, or the first
+            // favorite, can leave the row's order untouched, and the column
+            // only redraws it if it is told.
+            objectWillChange.send()
+        }
         tab.pin = nil
-        defer { writeSession(now: true) }
-        // Back out of the pinned block, to the head of the loose tabs.
-        if let here = tabs.firstIndex(where: { $0.id == tab.id }) {
-            let home = pinnedCount
-            if here != home {
-                tabs.move(fromOffsets: IndexSet(integer: here), toOffset: home > here ? home + 1 : home)
-            }
+        tab.shelf = .favorites
+        tab.forgetHome()
+        // Out of the kept block, to the head of the loose tabs: it was in
+        // front of every one of them, and tidying keeps it there.
+        tidyTabs()
+        writeSession(now: true)
+    }
+
+    /// Back to the page a favorite or pin was kept at.
+    func goHome(_ tab: Tab) {
+        guard tab.pin != nil else { return }
+        if tab.asleep {
+            // Selecting a sleeping tab wakes it at the page it slept on, and
+            // that load waits a beat for its view to reach the window. A trip
+            // home started meanwhile had the old page arrive in the middle of
+            // it, counted as where home landed — away, with no dot to say so.
+            // Put down at home first, the wake is the trip home.
+            tab.rest()
+            if activeID != tab.id { select(tab) } else { tab.wake() }
+        } else {
+            if activeID != tab.id { select(tab) }
+            tab.goHome()
         }
         rememberSession()
+    }
+
+    /// The page it is on becomes the page it goes back to.
+    func setHome(_ tab: Tab) {
+        guard tab.pin != nil, let url = tab.address, Shelves.canBeHome(url) else { return }
+        tab.remember(home: url)
+        writeSession(now: true)
+    }
+
+    // MARK: - folders of pins
+
+    /// The folder whose name is being typed over, in place.
+    @Published var editingFolder: UUID?
+
+    /// The pins section of the row, as the shelf rules see it.
+    private var pinSlots: [Slot] {
+        Browser.slots(of: tabs).filter { Shelves.section(of: $0) == .pins }
+    }
+
+    /// The pins as the column draws them: each folder's row, then its pins
+    /// while it is open (see Shelves.pinnedRows).
+    var pinnedRows: [PinnedRow] {
+        Shelves.pinnedRows(pinSlots, folders: folders, active: activeID)
+    }
+
+    /// A folder made around a pin, open, and named at once.
+    func newFolder(with tab: Tab) {
+        guard tab.pin != nil, tab.shelf == .pins else { return }
+        let folder = Folder(id: UUID(), name: "New Folder", open: true)
+        objectWillChange.send()
+        folders.append(folder)
+        tab.folder = folder.id
+        tidyTabs()
+        // Only the column draws folder rows. With the tabs across the top the
+        // name field would have nowhere to be, and would turn up later, out
+        // of nowhere, the next time the column is shown.
+        if prefs.sidebar { editingFolder = folder.id }
+        writeSession(now: true)
+    }
+
+    /// Into a folder, after its last pin — or, with nil, out of the one it is
+    /// in, to just after it (see Shelves.place). Into a closed one, it opens,
+    /// so the pin doesn't vanish from under the menu that sent it there.
+    func putInFolder(_ tab: Tab, _ folder: UUID?) {
+        guard tab.pin != nil, tab.shelf == .pins else { return }
+        if let folder, let i = folders.firstIndex(where: { $0.id == folder }), !folders[i].open {
+            folders[i].open = true
+        }
+        reorderPins(Shelves.place(tab.id, into: folder, pins: pinSlots))
+        writeSession(now: true)
+    }
+
+    func beginFolderRename(_ id: UUID) {
+        editingFolder = id
+    }
+
+    /// Typed into the folder's row. Nothing but spaces keeps the old name: a
+    /// folder with no name is a row you couldn't tell from the next.
+    func renameFolder(_ id: UUID, to typed: String) {
+        let name = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, let i = folders.firstIndex(where: { $0.id == id }) else { return }
+        folders[i].name = name
+    }
+
+    func endFolderEdit() {
+        guard editingFolder != nil else { return }
+        editingFolder = nil
+        writeSession(now: true)
+    }
+
+    /// Open or closed, remembered with the space.
+    func toggleFolder(_ id: UUID) {
+        guard let i = folders.firstIndex(where: { $0.id == id }) else { return }
+        folders[i].open.toggle()
+        rememberSession()
+    }
+
+    /// The folder goes; its pins stay where they are, loose.
+    func deleteFolder(_ id: UUID) {
+        objectWillChange.send()
+        if editingFolder == id { editingFolder = nil }
+        for tab in tabs where tab.folder == id { tab.folder = nil }
+        folders.removeAll { $0.id == id }
+        tidyTabs()
+        writeSession(now: true)
+    }
+
+    /// A pin row carried to another line among the pins as drawn.
+    func movePinRow(_ tab: Tab, to row: Int) {
+        reorderPins(Shelves.movePin(tab.id, to: row, pins: pinSlots, folders: folders, active: activeID))
+        rememberSession()
+    }
+
+    /// A folder's row carried to another line, its pins with it.
+    func moveFolderRow(_ id: UUID, to row: Int) {
+        reorderPins(Shelves.moveFolder(id, to: row, pins: pinSlots, folders: folders, active: activeID))
+        rememberSession()
+    }
+
+    /// The pins put in a new order, each with its folder; the favorites and
+    /// the day's tabs are left where they are. The column draws from the
+    /// browser, and a pin that only changed folder would otherwise publish
+    /// nothing.
+    private func reorderPins(_ pins: [Slot]) {
+        let byID = Dictionary(uniqueKeysWithValues: tabs.map { ($0.id, $0) })
+        let pinTabs = pins.compactMap { byID[$0.id] }
+        let start = favoriteCount
+        guard pinTabs.count == pinCount,
+              Set(pinTabs.map(\.id)) == Set(tabs[start..<(start + pinCount)].map(\.id))
+        else { return }
+        objectWillChange.send()
+        for slot in pins where byID[slot.id]?.folder != slot.folder { byID[slot.id]?.folder = slot.folder }
+        var row = tabs
+        row.replaceSubrange(start..<(start + pinTabs.count), with: pinTabs)
+        if row.map(\.id) != tabs.map(\.id) { tabs = row }
+        tidyTabs()
     }
 
     // MARK: - the address, in the tab itself
@@ -738,6 +1155,7 @@ final class Browser: NSObject, ObservableObject {
 
     override init() {
         super.init()
+        carry.browser = self
         Shield.shared.enabled = prefs.shielded
         Shield.shared.compile()
         if #available(macOS 15.4, *) { Extensions.shared.start(for: self) }
@@ -853,22 +1271,32 @@ final class Browser: NSObject, ObservableObject {
             }
             return
         }
+        var order: [UUID?] = []
         for entry in saved.tabs {
-            guard let url = URL(string: entry.url) else { continue }
+            guard let url = URL(string: entry.url) else { order.append(nil); continue }
             let tab = Tab()
             prepare(tab)
             tab.restore(url: url, title: entry.title, name: entry.name)
             tab.pin = entry.pin
+            tab.shelf = entry.keptShelf
+            tab.remember(home: entry.keptHome)
+            tab.folder = entry.folderID
             tabs.append(tab)
+            order.append(tab.id)
         }
         guard !tabs.isEmpty else {
             adopt(Tab())
             return
         }
-        let here = min(max(0, saved.active), tabs.count - 1)
-        activeID = tabs[here].id
+        // Chosen by where it was in the file, before tidying moves anything.
+        let chosen = tabs[min(max(0, saved.active), tabs.count - 1)]
+        activeID = chosen.id
+        folders = saved.folders ?? []
+        splits = Splits.restored(saved.splits ?? [], order: order)
+        tidyTabs()
         // Only the one you were looking at actually loads.
-        tabs[here].wake()
+        chosen.wake()
+        wakeSplit(of: chosen)
     }
 
     /// The few settings that something else has to be told about. The rest are
@@ -988,6 +1416,7 @@ final class Browser: NSObject, ObservableObject {
     }
 
     func writeSession(now: Bool = false) {
+        var written: [UUID] = []
         Session.write(
             now: now,
             space: spaceID,
@@ -1000,11 +1429,30 @@ final class Browser: NSObject, ObservableObject {
                     guard let url = tab.pending ?? tab.address,
                           url.scheme?.hasPrefix("http") == true
                     else { return nil }
+                    let kept = tab.pin != nil
+                    let saved = Shelves.savedAddress(
+                        address: url, home: tab.home, kept: kept, asleep: tab.asleep, away: tab.away
+                    )
+                    written.append(tab.id)
                     return Session.Entry(
-                        url: url.absoluteString, title: tab.title, pin: tab.pin, name: tab.name
+                        url: saved.absoluteString, title: tab.title, pin: tab.pin, name: tab.name,
+                        shelf: kept ? tab.shelf.rawValue : nil,
+                        home: kept ? tab.home?.absoluteString : nil,
+                        folder: kept ? tab.folder?.uuidString : nil
                     )
                 },
-                active: tabs.firstIndex { $0.id == activeID } ?? 0
+                active: tabs.firstIndex { $0.id == activeID } ?? 0,
+                // Only folders a pin is in: one emptied by a tab that left some
+                // way other than through tidying isn't written out.
+                folders: {
+                    let used = Set(tabs.compactMap { $0.pin != nil && $0.shelf == .pins ? $0.folder : nil })
+                    let kept = folders.filter { used.contains($0.id) }
+                    return kept.isEmpty ? nil : kept
+                }(),
+                splits: {
+                    let saved = Splits.saved(splits, order: written)
+                    return saved.isEmpty ? nil : saved
+                }()
             )
         )
     }
@@ -1080,6 +1528,7 @@ final class Browser: NSObject, ObservableObject {
         let url = Browser.page(url)
         let page = Tab(configuration: Browser.extensionConfiguration(for: url))
         prepare(page)
+        splits = Splits.replacing(tab.id, with: page.id, in: splits)
         tabs[index] = page
         page.go(to: url)
         if activeID == tab.id { activeID = page.id; editing = false }
@@ -1103,6 +1552,9 @@ final class Browser: NSObject, ObservableObject {
         // wake is this the other case, one whose page quietly died while you
         // were elsewhere, which revive() checks for on its own.
         if !tab.wake() { tab.revive() }
+        // A split is looked at whole: every pane of it wakes with the one
+        // selected.
+        wakeSplit(of: tab)
         rememberSession()
         editing = false
         typed = ""
@@ -1112,6 +1564,11 @@ final class Browser: NSObject, ObservableObject {
     /// behind; closing that blank tab closes the window.
     func close(_ tab: Tab) {
         guard let index = tabs.firstIndex(where: { $0.id == tab.id }) else { return }
+
+        // A pane closed or put down leaves its split, and you land on the pane
+        // beside it — not on whichever tab you used last.
+        let beside = activeID == tab.id ? Splits.neighbour(of: tab.id, in: splits) : nil
+        if split(of: tab) != nil { splits = Splits.removing(tab.id, from: splits) }
 
         // A tab whose page is out in the little window takes the window with
         // it. Left alone, the window would go on holding a page belonging to a
@@ -1128,7 +1585,9 @@ final class Browser: NSObject, ObservableObject {
             // bounced between the two instead of getting you out of them.
             let others = tabs.filter { $0.id != tab.id && !$0.asleep }
             let loose = others.filter { $0.pin == nil }
-            if let back = (loose.isEmpty ? others : loose).max(by: { $0.touched < $1.touched }) {
+            if let beside, let pane = tabs.first(where: { $0.id == beside }) {
+                select(pane)
+            } else if let back = (loose.isEmpty ? others : loose).max(by: { $0.touched < $1.touched }) {
                 select(back)
             } else {
                 newTab()
@@ -1160,7 +1619,11 @@ final class Browser: NSObject, ObservableObject {
             // right — through select(), same as everywhere else you land on
             // a tab, so one that was never built yet actually wakes up
             // instead of sitting there blank until a manual reload.
-            select(tabs[min(index, tabs.count - 1)])
+            if let beside, let pane = tabs.first(where: { $0.id == beside }) {
+                select(pane)
+            } else {
+                select(tabs[min(index, tabs.count - 1)])
+            }
         }
         rememberSession()
     }
@@ -1210,6 +1673,7 @@ final class Browser: NSObject, ObservableObject {
         prepare(tab)
         leaving()
         tabs.insert(tab, at: min(ghost.index, tabs.count))
+        tidyTabs()
         activeID = tab.id
         editing = false
         typed = ""
@@ -1227,12 +1691,20 @@ final class Browser: NSObject, ObservableObject {
         guard let here = tabs.firstIndex(where: { $0.id == tab.id }),
               index != here, tabs.indices.contains(index)
         else { return }
-        // The pinned block and the loose one don't mix: a letter that wandered
-        // into the middle of the titles would stop meaning anything.
-        let pinned = pinnedCount
-        if tab.pin != nil, index >= pinned { return }
-        if tab.pin == nil, index < pinned { return }
+        // Favorites, pins and the rest don't mix: a letter that wandered into
+        // the middle of the titles would stop meaning anything.
+        guard Shelves.canMove(slots, from: here, to: index) else { return }
         tabs.move(fromOffsets: IndexSet(integer: here), toOffset: index > here ? index + 1 : index)
+        // A pin carried in the top bar, which draws no folder rows, keeps its
+        // folder beside another of its pins or while it is the folder's only
+        // pin; anywhere else it takes the folder it landed between, or none
+        // (see Shelves.folderAfterMove). Left with its old one regardless,
+        // the column would show that folder split in two until the next tidy
+        // quietly put the pin back.
+        if tab.pin != nil, tab.shelf == .pins, let now = tabs.firstIndex(where: { $0.id == tab.id }) {
+            tab.folder = Shelves.folderAfterMove(Browser.slots(of: tabs), at: now)
+            tidyTabs()
+        }
         rememberSession()
     }
 
@@ -1266,6 +1738,7 @@ final class Browser: NSObject, ObservableObject {
         }
         prepare(tab)
         tabs.insert(tab, at: atEnd ? tabs.count : placeForNew())
+        tidyTabs()
         tab.go(to: url)
         if foreground {
             leaving()
@@ -1297,6 +1770,7 @@ final class Browser: NSObject, ObservableObject {
         }
         prepare(fresh)
         let wasActive = activeID == tab.id
+        splits = Splits.replacing(tab.id, with: fresh.id, in: splits)
         tabs[index] = fresh
         fresh.go(to: url)
         if wasActive { activeID = fresh.id }
@@ -1438,22 +1912,30 @@ final class Browser: NSObject, ObservableObject {
     func loadRow(_ space: UUID) -> Parked {
         let saved = Session.read(space: space)
         var row: [Tab] = []
+        var order: [UUID?] = []
         for entry in saved.tabs {
-            guard let url = URL(string: entry.url) else { continue }
+            guard let url = URL(string: entry.url) else { order.append(nil); continue }
             let tab = Tab(configuration: Web.configuration(space: space))
             prepare(tab)
             tab.restore(url: url, title: entry.title, name: entry.name)
             tab.pin = entry.pin
+            tab.shelf = entry.keptShelf
+            tab.remember(home: entry.keptHome)
+            tab.folder = entry.folderID
             row.append(tab)
+            order.append(tab.id)
         }
         let active = row.indices.contains(saved.active) ? row[saved.active].id : row.first?.id
-        return Parked(tabs: row, active: active)
+        let (tidy, folders) = Browser.tidied(row, folders: saved.folders ?? [])
+        return Parked(tabs: tidy, active: active, folders: folders, splits: Splits.restored(saved.splits ?? [], order: order))
     }
 
     /// Another space's row put on screen in place of this one (see
     /// Spaces.swift) — empty, for one that restores its own.
-    func showRow(_ row: [Tab], active: Tab.ID?) {
+    func showRow(_ row: [Tab], active: Tab.ID?, folders: [Folder] = [], splits: [Split] = []) {
+        self.splits = splits
         tabs = row
+        self.folders = folders
         activeID = active ?? row.first?.id
     }
 
@@ -1469,6 +1951,9 @@ final class Browser: NSObject, ObservableObject {
     /// A tab made outside the row — a peek being kept — put in it at `index`.
     func insert(_ tab: Tab, at index: Int) {
         tabs.insert(tab, at: min(max(0, index), tabs.count))
+        // Without this, a tab placed beside a pane could land between a
+        // split's today's tabs instead of after them.
+        tidyTabs()
         rememberSession()
     }
 
@@ -1939,6 +2424,23 @@ extension Browser: WKNavigationDelegate, WKUIDelegate {
             decisionHandler(.cancel)
             return
         }
+        // A plain click on a favorite or a pin that leads to another host
+        // opens in the peek, as in Arc: the kept tab stays on its own site. A
+        // link that asks for a new tab comes through here too, before any
+        // window is made. ⌘, ⇧, ⌥ and ⌃ keep their own meanings; a link in a
+        // frame, or in the peek itself, goes as any link does. Only the tab in
+        // front: a page's own script can "click" a link in a pin behind, and a
+        // peek opening over whatever you are reading is nobody's click. The
+        // site kept is the page on screen, not one still on its way.
+        if action.navigationType == .linkActivated,
+           action.targetFrame?.isMainFrame ?? true,
+           action.modifierFlags.intersection([.shift, .command, .option, .control]).isEmpty,
+           let from = tab(for: webView), from.pin != nil, from.id == activeID, peekTab == nil,
+           Shelves.opensInPeek(from: webView.backForwardList.currentItem?.url ?? webView.url ?? from.address, to: url) {
+            decisionHandler(.cancel)
+            DispatchQueue.main.async { [weak self] in self?.peek(url, from: from) }
+            return
+        }
         // Shift-click, when Settings says so: a peek at the link, over this
         // page (see Peek.swift). Only from a tab in the row — within a peek,
         // a link just goes.
@@ -1961,15 +2463,21 @@ extension Browser: WKNavigationDelegate, WKUIDelegate {
         // The next document gets this site's stylesheet of hidden things,
         // decided here because here is the last moment before it loads.
         if action.targetFrame?.isMainFrame ?? true, let tab = tab(for: webView) {
+            // A navigation of yours — a link, Back, a form, a reload — begun
+            // before home arrived ends the trip, but only if it replaces this
+            // page: not a new window, and not a link handed to another app.
+            // Redirects on the way home, and the trip's own load, come as
+            // .other.
+            if action.navigationType != .other, action.targetFrame != nil, Browser.pageSchemes.contains(scheme) {
+                tab.tripInterrupted()
+            }
             let host = curtain.host(of: url)
             tab.arm(hiding: curtain.css(on: host))
             // And the blocker, on or off for where it is going.
             Shield.shared.tune(webView.configuration.userContentController, for: host)
         }
 
-        // chrome-extension: an extension's own pages — options, a side
-        // panel, a tab it opened. WebKit serves them; nothing else here does.
-        if ["http", "https", "file", "about", "data", "blob", "chrome-extension", "webkit-extension"].contains(scheme) {
+        if Browser.pageSchemes.contains(scheme) {
             decisionHandler(.allow)
         } else {
             decisionHandler(.cancel)
@@ -2128,6 +2636,7 @@ extension Browser: WKNavigationDelegate, WKUIDelegate {
         didFailProvisionalNavigation navigation: WKNavigation!,
         withError error: Error
     ) {
+        anyTab(for: webView)?.tripFailed(error)
         fail(webView, error)
     }
 
@@ -2150,6 +2659,7 @@ extension Browser: WKNavigationDelegate, WKUIDelegate {
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        anyTab(for: webView)?.committed()
         guard let tab = tab(for: webView) else { return }
         if tab.id == activeID { linkStatus.dismiss() }
         tab.failure = nil
@@ -2221,8 +2731,19 @@ extension Browser: WKNavigationDelegate, WKUIDelegate {
         }
     }
 
+    /// What a page can load in place. chrome-extension: an extension's own
+    /// pages — options, a side panel, a tab it opened. WebKit serves them;
+    /// nothing else here does. Anything else is handed to another app.
+    static let pageSchemes = ["http", "https", "file", "about", "data", "blob", "chrome-extension", "webkit-extension"]
+
     func tab(for webView: WKWebView) -> Tab? {
         tabs.first { $0.built === webView }
+    }
+
+    /// The tab a page belongs to, on screen or parked in another space: a
+    /// trip home under way when you switched spaces still arrives.
+    private func anyTab(for webView: WKWebView) -> Tab? {
+        tab(for: webView) ?? parkedTabs.first { $0.built === webView }
     }
 }
 

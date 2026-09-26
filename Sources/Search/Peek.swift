@@ -7,13 +7,20 @@ import SwiftUI
 //
 // Off unless asked for, in Settings › General: shift-click means other
 // things to some pages, and nobody who doesn't want this should meet it.
+// A favorite or a pin opens one on its own, though, for any plain click
+// that leads to another host (see Browser's decidePolicyFor): a kept tab
+// stays on its site, and what it links to is looked at over it.
 //
 // The page is a tab of its own, only not in the row: keeping it is moving
 // it there, with nothing loaded twice.
 
 extension Browser {
-    /// Shift-click on a link, from a tab in the row.
+    /// A link's page over the tab in the row it came from: a shift-click, or
+    /// a favorite's or a pin's link to another site. One peek at a time — a
+    /// second arriving before the first is up would otherwise leave the first
+    /// loading, and playing, with nothing on screen to stop it.
     func peek(_ url: URL, from tab: Tab) {
+        closePeek()
         let page = Tab(shy: tab.shy)
         prepare(page)
         page.go(to: url)

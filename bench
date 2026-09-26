@@ -18,6 +18,18 @@
     ./bench submit ID SELECTOR         the form around SELECTOR
     ./bench shot ID [PATH] [WIDTH]     a PNG of the page → its path
     ./bench close ID | all             only tabs the bench opened
+    ./bench keep ID favorites|pins|off a tab made a favorite or a pin, moved between them, or let go — --test runs only
+    ./bench drop ID favorites N|pins N|today N|row ID|left|right|nowhere [pane]
+                                       a drop as the column would make it, straight to the rule and the browser — --test runs only
+    ./bench carry ID X Y [pane] | carry end
+                                       the column's drop path driven straight on Carry, without a real drag —
+                                       X Y in the same window coordinates as `areas`; carry end lets go — --test runs only
+    ./bench home ID [go|set]           a kept tab's page: where it is, back to it, or this page as it — --test runs only
+    ./bench folder new ID NAME | into ID NAME | out ID | toggle NAME | delete NAME | rename NAME NEW
+                 | drag ID INDEX | dragfolder NAME INDEX | rows
+                                       folders of pins, and the pinned rows as drawn — --test runs only
+    ./bench split new|add ID|remove ID|focus ID|resize DIVIDER FRACTION|even|click INDEX|separate|list
+                                       split view, and each pane's share and place in the window — --test runs only
     ./bench probe                      the window's own state: panels, modal, windows
     ./bench extensions                 installed extensions, loaded or not, with their warnings
     ./bench little URL|keep|close      a small window for a link (made unseen), kept into the row, or closed
@@ -48,6 +60,12 @@
     ./bench hit X Y [double|middle]    what a press at X Y (points from the window's top left) lands on,
                                        and whether a drag from there would move the window;
                                        double: test run, a double-click there (start the probe hidden)
+    ./bench areas                     where the column and the page last said their drop areas are,
+                                       in the window from its top-left, as `hit` counts
+    ./bench drag X1 Y1 X2 Y2 [STEPS] [hold] | drag release X Y
+                                       test run: a real drag posted at the window, from X1 Y1 to X2 Y2 in
+                                       STEPS steps, counted as `hit` does; hold: leave the button down;
+                                       release: let it go at X Y
     ./bench place ID INDEX             put a tab at another place in the row
     ./bench field TEXT [type] [go]     test run: TEXT pasted into the address field (type: a key at a time),
                                        each timed until the window has caught up; go: then Return, timed
@@ -58,7 +76,7 @@
                                        folder (open: its first bookmark picked)
     ./bench bookmark URL [new]         test run: a bookmark picked from the list, timed until it loads
                                        (new: into a new tab, whose page isn't built yet)
-    ./bench peek URL|close             test run: the peek panel over the tab in front, as a shift-click opens it
+    ./bench peek URL|close|state       test run: the peek panel over the tab in front, as a shift-click opens it (state: what it holds)
     ./bench window                     test run: open the browser's window if a hidden probe came up without it
     ./bench pages on|off               test run: let a hidden probe's pages be painted, off every screen (for picture)
     ./bench picture PATH               test run: the whole window, pages included, drawn to a PNG (start the probe hidden)
@@ -127,6 +145,61 @@ def main(argv):
     elif verb in ("text", "close", "sleep", "select"):
         if len(args) != 1: sys.exit(f"usage: bench {verb} ID")
         request["id"] = args[0]
+    elif verb == "keep":
+        if len(args) != 2 or args[1] not in ("favorites", "pins", "off"): sys.exit("usage: bench keep ID favorites|pins|off")
+        request["id"], request["as"] = args
+    elif verb == "drop":
+        usage = "usage: bench drop ID favorites N|pins N|today N|row ID|left|right|nowhere [pane]"
+        pane = bool(args) and args[-1] == "pane"
+        a = args[:-1] if pane else args
+        if len(a) < 2: sys.exit(usage)
+        request["id"], request["to"] = a[0], a[1]
+        if a[1] in ("favorites", "pins", "today"):
+            if len(a) != 3: sys.exit(usage)
+            request["index"] = int(a[2])
+        elif a[1] == "row":
+            if len(a) != 3: sys.exit(usage)
+            request["row"] = a[2]
+        elif a[1] in ("left", "right", "nowhere"):
+            if len(a) != 2: sys.exit(usage)
+        else:
+            sys.exit(usage)
+        if pane: request["pane"] = True
+    elif verb == "carry":
+        usage = "usage: bench carry ID X Y [pane] | carry end"
+        if args == ["end"]:
+            request["end"] = True
+        else:
+            pane = bool(args) and args[-1] == "pane"
+            a = args[:-1] if pane else args
+            if len(a) != 3: sys.exit(usage)
+            request["id"], request["x"], request["y"] = a[0], float(a[1]), float(a[2])
+            if pane: request["pane"] = True
+    elif verb == "home":
+        if len(args) not in (1, 2) or (len(args) == 2 and args[1] not in ("go", "set")): sys.exit("usage: bench home ID [go|set]")
+        request["id"] = args[0]
+        if len(args) == 2: request["what"] = args[1]
+    elif verb == "folder":
+        what, a = (args[0], args[1:]) if args else ("rows", [])
+        need = {"new": 2, "into": 2, "out": 1, "toggle": 1, "delete": 1, "rename": 2, "drag": 2, "dragfolder": 2, "rows": 0}
+        if what not in need or len(a) != need[what]:
+            sys.exit("usage: bench folder new ID NAME|into ID NAME|out ID|toggle NAME|delete NAME|rename NAME NEW|drag ID INDEX|dragfolder NAME INDEX|rows")
+        request["what"] = what
+        if what in ("new", "into"): request["id"], request["name"] = a
+        elif what == "out": request["id"] = a[0]
+        elif what in ("toggle", "delete"): request["name"] = a[0]
+        elif what == "rename": request["name"], request["to"] = a
+        elif what == "drag": request["id"], request["index"] = a[0], int(a[1])
+        elif what == "dragfolder": request["name"], request["index"] = a[0], int(a[1])
+    elif verb == "split":
+        what, a = (args[0], args[1:]) if args else ("list", [])
+        need = {"new": 0, "add": 1, "remove": 1, "focus": 1, "resize": 2, "even": 0, "click": 1, "separate": 0, "list": 0}
+        if what not in need or len(a) != need[what]:
+            sys.exit("usage: bench split new|add ID|remove ID|focus ID|resize DIVIDER FRACTION|even|click INDEX|separate|list")
+        request["what"] = what
+        if what in ("add", "remove", "focus"): request["id"] = a[0]
+        elif what == "resize": request["divider"], request["fraction"] = int(a[0]), float(a[1])
+        elif what == "click": request["index"] = int(a[0])
     elif verb == "eval":
         if len(args) not in (2, 3) or (len(args) == 3 and args[2] != "search"): sys.exit("usage: bench eval ID JS [search]")
         request["id"], request["js"] = args[0], args[1]
@@ -228,6 +301,19 @@ def main(argv):
         if len(args) not in (2, 3) or (len(args) == 3 and args[2] not in ("double", "middle")): sys.exit("usage: bench hit X Y [double|middle]")
         request["x"], request["y"] = float(args[0]), float(args[1])
         if len(args) == 3: request[args[2]] = True
+    elif verb == "areas":
+        if args: sys.exit("usage: bench areas")
+    elif verb == "drag":
+        if args[:1] == ["release"]:
+            if len(args) != 3: sys.exit("usage: bench drag release X Y")
+            request["release"], request["x2"], request["y2"] = True, float(args[1]), float(args[2])
+        else:
+            hold = bool(args) and args[-1] == "hold"
+            a = args[:-1] if hold else args
+            if len(a) not in (4, 5): sys.exit("usage: bench drag X1 Y1 X2 Y2 [STEPS] [hold] | drag release X Y")
+            request["x1"], request["y1"], request["x2"], request["y2"] = map(float, a[:4])
+            if len(a) == 5: request["steps"] = int(a[4])
+            if hold: request["hold"] = True
     elif verb == "place":
         if len(args) != 2: sys.exit("usage: bench place ID INDEX")
         request["id"], request["to"] = args[0], int(args[1])
@@ -285,11 +371,29 @@ def main(argv):
     elif verb in ("eval", "ext-popup"):
         value = answer.get("value")
         print(value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, indent=2))
+    elif verb == "folder":
+        for row in answer.get("rows", []):
+            print(row)
+    elif verb == "split":
+        print(f"splits {answer.get('splits')}  active {answer.get('active')}")
+        for p in answer.get("panes", []):
+            print(f"{'▶' if p.get('focused') else ' '} {p['id']}  share {p['width']:.2f}  x {p['x']:.0f}  w {p['w']:.0f}")
+        for r in answer.get("rows", []):
+            print("  row " + r)
+    elif verb == "drop":
+        print(f"action {answer.get('action')}")
+        print(f"favorites {answer.get('favorites')}")
+        print(f"pins {answer.get('pins')}")
+        print(f"today {answer.get('today')}")
+        print(f"splits {answer.get('splits')}")
+        print(f"active {answer.get('active')}")
     elif verb == "tabs":
         for tab in answer.get("tabs", []):
             mark = "⚗" if tab.get("bench") else ("●" if tab.get("active") else " ")
             state = " …" if tab.get("loading") else (" z" if tab.get("asleep") else "")
-            print(f"{mark} {tab['id']}  {tab.get('title') or '—'}  {tab.get('url')}{state}")
+            kept = {"favorites": "FAV ", "pins": "PIN "}.get(tab.get("shelf"), "")
+            away = " (away from " + tab.get("home") + ")" if tab.get("away") else ""
+            print(f"{mark} {tab['id']}  {kept}{tab.get('title') or '—'}  {tab.get('url')}{state}{away}")
     else:
         print(json.dumps(answer, ensure_ascii=False, indent=2))
     return 0

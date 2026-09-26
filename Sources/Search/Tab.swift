@@ -365,6 +365,79 @@ final class Tab: ObservableObject, Identifiable {
     /// is all you need for the five or six pages you keep open all day.
     @Published var pin: String?
 
+    /// Which kind of kept tab it is — a card at the top of the column or a
+    /// row under them — whenever `pin` says it is kept.
+    @Published var shelf: Shelf = .favorites
+
+    /// The page it was kept at, and goes back to: ⌘W puts it down there, and
+    /// the back button takes it there. Nil for a tab that isn't kept.
+    @Published private(set) var home: URL?
+
+    /// Where the last trip home actually arrived, redirects and all. It
+    /// counts as home: a site that sends its front page on to an inbox
+    /// hasn't taken you anywhere. Not saved; the next trip finds it again.
+    @Published private(set) var landed: URL?
+
+    /// The folder it sits in, for a pin in one.
+    @Published var folder: UUID?
+
+    /// From a trip home starting until the page has finished arriving: every
+    /// address it passes through meanwhile is still home.
+    private var homing = false
+
+    /// Kept, and on some page other than the one it was kept at.
+    var away: Bool {
+        pin != nil && home != nil && !Shelves.isHome(address, home: home, landed: landed)
+    }
+
+    /// Kept at this page.
+    func remember(home url: URL?) {
+        home = url
+        landed = nil
+        homing = false
+    }
+
+    /// No longer kept: no page to go back to, no folder to be in.
+    func forgetHome() {
+        home = nil
+        landed = nil
+        homing = false
+        folder = nil
+    }
+
+    /// Back to the page it was kept at, in place, awake.
+    func goHome() {
+        guard let home else { return }
+        landed = nil
+        go(to: home)
+        homing = true
+    }
+
+    /// The page has committed. A trip home ends here, and where it arrived,
+    /// the server's redirects already followed, counts as home too. Not
+    /// when loading stops: a load still running when the trip began stops
+    /// first, and the trip would end before home had answered.
+    func committed() {
+        guard homing else { return }
+        homing = false
+        landed = built?.url
+    }
+
+    /// The trip home never arrived: no host, no network. Whatever is
+    /// committed next is you going somewhere, not home. A cancelled load is
+    /// not that: it is, most often, the page the trip itself stopped.
+    func tripFailed(_ error: Error) {
+        let failure = error as NSError
+        guard Shelves.failureEndsTrip(domain: failure.domain, code: failure.code) else { return }
+        homing = false
+    }
+
+    /// You went somewhere yourself before home arrived: a link, Back, a
+    /// form, a reload. What commits next is that, not home.
+    func tripInterrupted() {
+        homing = false
+    }
+
     /// A name you gave it, in place of whatever the page calls itself. It
     /// stays through navigation: a tab you named is a tab you are keeping for
     /// a job, not for a page.
@@ -486,6 +559,11 @@ final class Tab: ObservableObject, Identifiable {
                     guard fresh.absoluteString != "about:blank" else { return }
                     let moved = fresh.host() != self.address?.host()
                     self.address = fresh
+                    // Kept before it had a page to keep — an extension pinned
+                    // it blank: the first real page it reaches is its home.
+                    if self.pin != nil, self.home == nil, Shelves.canBeHome(fresh) {
+                        self.remember(home: fresh)
+                    }
                     if moved { self.adoptIcon() }
                 }
             },
@@ -493,7 +571,10 @@ final class Tab: ObservableObject, Identifiable {
                 MainActor.assumeIsolated { self?.progress = self?.built?.estimatedProgress ?? 0 }
             },
             web.observe(\.isLoading, options: [.new]) { [weak self] _, _ in
-                MainActor.assumeIsolated { self?.loading = self?.built?.isLoading ?? false }
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.loading = self.built?.isLoading ?? false
+                }
             },
             web.observe(\.canGoBack, options: [.new]) { [weak self] _, _ in
                 MainActor.assumeIsolated { self?.canGoBack = self?.built?.canGoBack ?? false }
@@ -736,6 +817,9 @@ final class Tab: ObservableObject, Identifiable {
     }
 
     func go(to url: URL) {
+        // Sent somewhere by hand: any trip home under way is over. goHome
+        // starts its own trip after calling this.
+        homing = false
         // Judged by the page it shows, not by how it was made: a tab an
         // extension's page opened with window.open is built from that
         // extension's configuration too. A tab with no page yet was just
@@ -784,7 +868,14 @@ final class Tab: ObservableObject, Identifiable {
     /// address is remembered; everything the page was holding is let go, so a
     /// pin you are not reading costs a line in a file and nothing else.
     func rest() {
-        guard let url = address else { return }
+        // Put down at the page it was kept at, as in Arc: the next click
+        // opens it there, not wherever it had wandered off to.
+        guard let url = (pin != nil ? home : nil) ?? address else { return }
+        if url != address {
+            address = url
+            title = ""
+            adoptIcon()
+        }
         pending = url
         memory = nil
         picture = nil
@@ -983,6 +1074,12 @@ final class Tab: ObservableObject, Identifiable {
     @discardableResult
     func wake() -> Bool {
         guard let url = pending else { return false }
+        // Woken at the page it was kept at — after ⌘W, or from the session —
+        // wherever that page sends it on the way in is still home.
+        if let home, Shelves.normalised(url) == Shelves.normalised(home) {
+            landed = nil
+            homing = true
+        }
         pending = nil
         failure = nil
         reading = 0

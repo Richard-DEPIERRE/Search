@@ -12,6 +12,14 @@ let package = Package(
             // main-thread by nature, and Swift 6's strict isolation buys nothing
             // here but ceremony.
             swiftSettings: [.swiftLanguageMode(.v5)]
-        )
+        ),
+        // The rules that need no window: the order of the row, what counts
+        // as a kept tab's own page, what an old session file means.
+        .testTarget(
+            name: "SearchTests",
+            dependencies: ["Search"],
+            path: "Tests/SearchTests",
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
     ]
 )

@@ -335,6 +335,218 @@ final class Bench {
             browser.select(tab)
             answer(describe(tab))
 
+        case "keep":
+            // A tab made a favorite or let go, as its menu would. Changing
+            // what is kept changes your row: only on a SEARCH_PROBE run.
+            guard Store.testing else { answer(["error": "keep only works on a --test run — it changes your tabs"]); return }
+            guard let tab = find(request, in: browser) else { answer(missing(request)); return }
+            switch request["as"] as? String ?? "" {
+            case "favorites": browser.keep(tab, on: .favorites)
+            case "pins": browser.keep(tab, on: .pins)
+            case "off": browser.unpin(tab)
+            default: answer(["error": "keep needs favorites, pins or off"]); return
+            }
+            answer(describe(tab))
+
+        case "drop":
+            // A drop as the column would make it, straight to the rule and the
+            // browser — the bench can't hold a mouse button. Only on a test run:
+            // it moves your tabs.
+            guard Store.testing else { answer(["error": "drop only works on a --test run — it changes your tabs"]); return }
+            guard let tab = find(request, in: browser) else { answer(missing(request)); return }
+            var source = browser.dragSource(of: tab)
+            if request["pane"] as? Bool == true {
+                guard let split = browser.split(of: tab) else { answer(["error": "that tab is in no split"]); return }
+                source = .pane(split: split.id, was: source)
+            }
+            let index = request["index"] as? Int ?? 0
+            let target: DropTarget?
+            switch request["to"] as? String ?? "" {
+            case "favorites": target = .favorites(index)
+            case "pins": target = .pins(index)
+            case "today": target = .today(index)
+            case "row":
+                guard let ref = (request["row"] as? String)?.lowercased(),
+                      let member = browser.tabs.first(where: { $0.id.uuidString.lowercased().hasPrefix(ref) }),
+                      let split = browser.split(of: member)
+                else { answer(["error": "no split holds that tab"]); return }
+                target = .splitRow(split.id)
+            case "left": target = .page(.left)
+            case "right": target = .page(.right)
+            case "nowhere": target = nil
+            default: answer(["error": "drop needs favorites N, pins N, today N, row ID, left, right or nowhere"]); return
+            }
+            let action = Drops.resolve(source: source, target: target, tab: tab.id, active: browser.activeID, splits: browser.splits)
+            browser.apply(action, to: tab)
+            answer(shelves(of: browser, action: "\(action)"))
+
+        case "carry":
+            // The column's drop path, driven straight on Carry — for
+            // checking what a drag would do without posting one, which
+            // reaches a real DragGesture only unreliably in a test window.
+            // Only on a test run: it moves your tabs.
+            guard Store.testing else { answer(["error": "carry only works on a --test run — it changes your tabs"]); return }
+            if request["end"] as? Bool == true {
+                browser.carry.end()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { answer(self.shelves(of: browser)) }
+                return
+            }
+            guard let tab = find(request, in: browser), let x = request["x"] as? Double, let y = request["y"] as? Double
+            else { answer(["error": "carry needs a tab id and a point, or end"]); return }
+            var source = browser.dragSource(of: tab)
+            if request["pane"] as? Bool == true {
+                guard let split = browser.split(of: tab) else { answer(["error": "that tab is in no split"]); return }
+                source = .pane(split: split.id, was: source)
+            }
+            browser.carry.move(tab, from: source, to: CGPoint(x: x, y: y))
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                var out = self.shelves(of: browser)
+                out["lifted"] = browser.carry.lifted
+                out["target"] = browser.carry.target.map { "\($0)" } ?? ""
+                answer(out)
+            }
+
+        case "home":
+            // A kept tab's page: where it is, back to it, or this page as it.
+            guard Store.testing else { answer(["error": "home only works on a --test run — it changes your tabs"]); return }
+            guard let tab = find(request, in: browser) else { answer(missing(request)); return }
+            switch request["what"] as? String ?? "" {
+            case "go": browser.goHome(tab)
+            case "set": browser.setHome(tab)
+            default: break
+            }
+            answer(describe(tab))
+
+        case "folder":
+            // Folders of pins made, filled, moved and dropped, as their menus
+            // and drags would. They change your row: only on a SEARCH_PROBE run.
+            guard Store.testing else { answer(["error": "folder only works on a --test run — it changes your tabs"]); return }
+            let named = browser.folders.first { $0.name == request["name"] as? String }
+            switch request["what"] as? String ?? "rows" {
+            case "new":
+                guard let tab = find(request, in: browser) else { answer(missing(request)); return }
+                browser.newFolder(with: tab)
+                if let id = browser.editingFolder {
+                    browser.renameFolder(id, to: request["name"] as? String ?? "Folder")
+                    browser.endFolderEdit()
+                }
+            case "into":
+                guard let tab = find(request, in: browser) else { answer(missing(request)); return }
+                guard let named else { answer(["error": "no folder called that"]); return }
+                browser.putInFolder(tab, named.id)
+            case "out":
+                guard let tab = find(request, in: browser) else { answer(missing(request)); return }
+                browser.putInFolder(tab, nil)
+            case "toggle", "delete", "rename", "dragfolder":
+                guard let named else { answer(["error": "no folder called that"]); return }
+                switch request["what"] as? String {
+                case "toggle": browser.toggleFolder(named.id)
+                case "delete": browser.deleteFolder(named.id)
+                case "rename":
+                    browser.beginFolderRename(named.id)
+                    browser.renameFolder(named.id, to: request["to"] as? String ?? "")
+                    browser.endFolderEdit()
+                default: browser.moveFolderRow(named.id, to: request["index"] as? Int ?? 0)
+                }
+            case "drag":
+                guard let tab = find(request, in: browser) else { answer(missing(request)); return }
+                browser.movePinRow(tab, to: request["index"] as? Int ?? 0)
+            case "rows":
+                break
+            default:
+                answer(["error": "folder needs new, into, out, toggle, delete, rename, drag, dragfolder or rows"]); return
+            }
+            answer(["rows": browser.pinnedRows.map { row -> String in
+                switch row {
+                case .folder(let id):
+                    let folder = browser.folders.first { $0.id == id }
+                    return "FOLDER \(folder?.name ?? "?")" + (folder?.open == false ? " (closed)" : "")
+                case .pin(let id, let folder):
+                    let tab = browser.tabs.first { $0.id == id }
+                    return (folder == nil ? "" : "  ") + "PIN \(tab.map(Bench.short) ?? "?") \(tab?.address?.path ?? "")"
+                }
+            }])
+
+        case "split":
+            // Split view driven as its keys and menus would. Changing the
+            // panes changes your window: only on a SEARCH_PROBE run.
+            guard Store.testing else { answer(["error": "split only works on a --test run — it changes your window"]); return }
+            // Where each pane sits in the window, read from its page's own
+            // view: the layout as drawn, not as meant.
+            func respond() {
+                let split = browser.activeSplit
+                answer([
+                    "splits": browser.splits.count,
+                    "active": browser.active.map(Bench.short) ?? "",
+                    "panes": (split?.tabs ?? []).enumerated().map { index, id -> [String: Any] in
+                        let tab = browser.tabs.first { $0.id == id }
+                        let frame = tab?.built.map { $0.convert($0.bounds, to: nil) } ?? .zero
+                        return [
+                            "id": tab.map(Bench.short) ?? "?",
+                            "width": split.map { $0.widths.indices.contains(index) ? $0.widths[index] : 0 } ?? 0,
+                            "x": Double(frame.minX), "w": Double(frame.width),
+                            "focused": id == browser.activeID,
+                        ]
+                    },
+                    "rows": browser.todayRows.map { row -> String in
+                        switch row {
+                        case .tab(let id):
+                            return "TAB " + (browser.tabs.first { $0.id == id }.map(Bench.short) ?? "?")
+                        case .split(let id):
+                            let members = browser.splits.first { $0.id == id }?.tabs ?? []
+                            return "SPLIT " + members.map { member in browser.tabs.first { $0.id == member }.map(Bench.short) ?? "?" }.joined(separator: "|")
+                        }
+                    },
+                ])
+            }
+            switch request["what"] as? String ?? "list" {
+            case "separate":
+                guard let split = browser.activeSplit else { answer(["error": "no split on screen"]); return }
+                browser.separateSplit(split.id)
+            case "new": browser.newSplitPane()
+            case "add":
+                guard let tab = find(request, in: browser) else { answer(missing(request)); return }
+                browser.addToSplit(tab)
+            case "remove":
+                guard let tab = find(request, in: browser) else { answer(missing(request)); return }
+                browser.removeFromSplit(tab)
+            case "focus":
+                guard let tab = find(request, in: browser) else { answer(missing(request)); return }
+                browser.select(tab)
+            case "resize":
+                guard let split = browser.activeSplit else { answer(["error": "no split on screen"]); return }
+                browser.resizeSplit(split.id, divider: request["divider"] as? Int ?? 0, to: request["fraction"] as? Double ?? 0.5)
+            case "even":
+                guard let split = browser.activeSplit else { answer(["error": "no split on screen"]); return }
+                browser.evenSplit(split.id)
+            case "click":
+                // A real left click posted at the centre of a pane, through
+                // the app's event queue — `tap` calls mouseDown on the web
+                // view directly, which bypasses the local event monitor that
+                // click-to-focus relies on, so it can't test that path.
+                guard let split = browser.activeSplit, let index = request["index"] as? Int,
+                      split.tabs.indices.contains(index),
+                      let tab = browser.tabs.first(where: { $0.id == split.tabs[index] }),
+                      let web = tab.built, let window = web.window
+                else { answer(["error": "no split on screen, or index out of range"]); return }
+                let point = web.convert(NSPoint(x: web.bounds.midX, y: web.bounds.midY), to: nil)
+                for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                    if let event = NSEvent.mouseEvent(
+                        with: type, location: point, modifierFlags: [],
+                        timestamp: ProcessInfo.processInfo.systemUptime,
+                        windowNumber: window.windowNumber, context: nil,
+                        eventNumber: 0, clickCount: 1, pressure: 1
+                    ) {
+                        NSApp.postEvent(event, atStart: false)
+                    }
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: respond)
+                return
+            case "list": break
+            default: answer(["error": "split needs new, add, remove, focus, resize, even, click, separate or list"]); return
+            }
+            respond()
+
         case "text":
             guard let tab = find(request, in: browser) else { answer(missing(request)); return }
             house(tab)
@@ -596,6 +808,76 @@ final class Bench {
             }
             step(1)
 
+        case "areas":
+            // Where the column and the page last said their drop areas are, in
+            // the window from its top-left, as `hit` counts — for aiming a drag.
+            let a = browser.carry.effective
+            func box(_ r: CGRect?) -> Any { r.map { [Double($0.minX), Double($0.minY), Double($0.width), Double($0.height)] } ?? NSNull() }
+            answer([
+                "favorites": box(a.favorites), "favoriteColumns": a.favoriteColumns,
+                "favoriteStep": [Double(a.favoriteStep.width), Double(a.favoriteStep.height)], "favoriteCount": a.favoriteCount,
+                "pins": box(a.pins), "pinCount": a.pinCount,
+                "today": box(a.today), "todayCount": a.todayCount,
+                "splitRows": a.splitRows.values.map { box($0) },
+                "page": box(a.page),
+            ])
+
+        case "drag":
+            // A real drag, posted through the app's event queue as `split click`
+            // posts its click: pressed at one point of the window, moved in
+            // steps, let go at another — counted from the window's top-left, as
+            // `hit` counts. `hold` leaves the button down for a look at the
+            // chip; `release` lets it go. A posted drag reaches SwiftUI's own
+            // drag gestures only unreliably in a test window, so `carry` is how
+            // the column's drop path is actually checked.
+            guard Store.testing else { answer(["error": "drag only works on a --test run — it moves your tabs"]); return }
+            guard let window = Links.window else { answer(["error": "no window"]); return }
+            func post(_ type: NSEvent.EventType, _ x: Double, _ y: Double) {
+                let point = NSPoint(x: x, y: Double(window.frame.height) - y)
+                if let event = NSEvent.mouseEvent(
+                    with: type, location: point, modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: window.windowNumber, context: nil,
+                    eventNumber: 0, clickCount: 1, pressure: 1
+                ) {
+                    NSApp.postEvent(event, atStart: false)
+                }
+            }
+            // A mouse-down posted to a window that isn't key is often spent
+            // bringing the window forward instead of starting the drag — so
+            // the window is made key first, and every press waits for that
+            // to have taken effect.
+            let woken = 0.3
+            NSApp.activate(ignoringOtherApps: true)
+            window.makeKeyAndOrderFront(nil)
+            if request["release"] as? Bool == true {
+                guard let x = request["x2"] as? Double, let y = request["y2"] as? Double else { answer(["error": "release needs a point"]); return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + woken) { post(.leftMouseUp, x, y) }
+                DispatchQueue.main.asyncAfter(deadline: .now() + woken + 0.6) { answer(self.shelves(of: browser)) }
+                return
+            }
+            guard let x1 = request["x1"] as? Double, let y1 = request["y1"] as? Double,
+                  let x2 = request["x2"] as? Double, let y2 = request["y2"] as? Double
+            else { answer(["error": "drag needs two points"]); return }
+            let steps = max(2, request["steps"] as? Int ?? 12)
+            let hold = request["hold"] as? Bool == true
+            DispatchQueue.main.asyncAfter(deadline: .now() + woken) { post(.leftMouseDown, x1, y1) }
+            for i in 1...steps {
+                DispatchQueue.main.asyncAfter(deadline: .now() + woken + 0.03 * Double(i)) {
+                    let f = Double(i) / Double(steps)
+                    post(.leftMouseDragged, x1 + (x2 - x1) * f, y1 + (y2 - y1) * f)
+                }
+            }
+            let end = woken + 0.03 * Double(steps + 2)
+            if !hold { DispatchQueue.main.asyncAfter(deadline: .now() + end) { post(.leftMouseUp, x2, y2) } }
+            DispatchQueue.main.asyncAfter(deadline: .now() + end + 0.6) {
+                var out = self.shelves(of: browser)
+                out["lifted"] = browser.carry.lifted
+                out["target"] = browser.carry.target.map { "\($0)" } ?? ""
+                answer(out)
+            }
+            return
+
         case "hit":
             // What a press at a point of the window lands on, and whether
             // AppKit would carry the window off on a drag from there — the
@@ -803,6 +1085,12 @@ final class Bench {
             if request["url"] as? String == "close" {
                 browser.closePeek()
                 answer(["peek": ""])
+                return
+            }
+            // What the peek holds, if one is open, without touching it: how a
+            // script sees that a click on a favorite went there.
+            if request["url"] as? String == "state" {
+                answer(["peek": browser.peekTab?.address?.absoluteString ?? ""])
                 return
             }
             guard let tab = browser.active, let text = request["url"] as? String, let url = URL(string: text)
@@ -1302,7 +1590,7 @@ final class Bench {
 
         default:
             answer(["error": "unknown command “\(verb)”", "commands": [
-                "tabs", "open", "go", "close", "wait", "sleep", "select", "text", "eval", "click", "type", "submit", "shot", "probe", "key", "resize", "hit", "film", "window", "pages", "picture", "place", "field", "bookmark", "menu", "keyeq", "pull", "space", "strip", "column", "fold", "consent", "site", "little", "ui",
+                "tabs", "open", "go", "close", "wait", "sleep", "select", "keep", "drop", "carry", "home", "folder", "split", "text", "eval", "click", "type", "submit", "shot", "probe", "key", "resize", "hit", "areas", "drag", "film", "window", "pages", "picture", "place", "field", "bookmark", "menu", "keyeq", "pull", "space", "strip", "column", "fold", "consent", "site", "little", "ui",
             ]])
         }
     }
@@ -1428,6 +1716,31 @@ final class Bench {
         ["error": "no tab “\(request["id"] as? String ?? "")” — see tabs"]
     }
 
+    /// The column as drawn, section by section, for checking where a drop put
+    /// things.
+    private func shelves(of browser: Browser, action: String? = nil) -> [String: Any] {
+        func short(_ id: UUID) -> String { browser.tabs.first { $0.id == id }.map(Bench.short) ?? "?" }
+        var out: [String: Any] = [
+            "favorites": browser.tabs.filter { $0.pin != nil && $0.shelf == .favorites }.map(Bench.short),
+            "pins": browser.pinnedRows.map { row -> String in
+                switch row {
+                case .folder(let id): return "FOLDER " + (browser.folders.first { $0.id == id }?.name ?? "?")
+                case .pin(let id, let folder): return (folder == nil ? "PIN " : "  PIN ") + short(id)
+                }
+            },
+            "today": browser.todayRows.map { row -> String in
+                switch row {
+                case .tab(let id): return "TAB " + short(id)
+                case .split(let id): return "SPLIT " + (browser.splits.first { $0.id == id }?.tabs ?? []).map(short).joined(separator: "|")
+                }
+            },
+            "splits": browser.splits.map { $0.tabs.map(short).joined(separator: "|") },
+            "active": browser.active.map(Bench.short) ?? "",
+        ]
+        if let action { out["action"] = action }
+        return out
+    }
+
     private func describe(_ tab: Tab) -> [String: Any] {
         [
             "id": Bench.short(tab),
@@ -1444,6 +1757,11 @@ final class Bench {
             "noisy": tab.noisy,
             "muted": tab.muted,
             "extensions": { if #available(macOS 15.4, *) { return tab.carriesExtensions } else { return false } }(),
+            "pin": tab.pin ?? "",
+            "shelf": tab.pin == nil ? "" : tab.shelf.rawValue,
+            "home": tab.home?.absoluteString ?? "",
+            "away": tab.away,
+            "folder": tab.folder?.uuidString ?? "",
         ]
     }
 

@@ -902,7 +902,7 @@ extension Extensions: WKWebExtensionControllerDelegate {
         guard let browser else { return nil }
         let url = configuration.url ?? URL(string: "about:blank")!
         let tab = browser.open(url, foreground: configuration.shouldBeActive, atEnd: true)
-        if configuration.shouldBePinned { browser.pin(tab) }
+        if configuration.shouldBePinned { browser.keep(tab, on: .favorites) }
         return adapter(for: tab)
     }
 
@@ -1031,7 +1031,7 @@ final class ExtensionTab: NSObject, WKWebExtensionTab {
 
     func setPinned(_ pinned: Bool, for context: WKWebExtensionContext) async throws {
         guard let tab, let browser else { return }
-        if pinned, tab.pin == nil { browser.pin(tab) }
+        if pinned, tab.pin == nil { browser.keep(tab, on: .favorites) }
         if !pinned, tab.pin != nil { browser.unpin(tab) }
     }
 

@@ -192,7 +192,7 @@ struct TabBar: View {
         } else {
             let space = browser.spaces[index]
             let row = space.id == browser.spaceID
-                ? Parked(tabs: browser.tabs, active: browser.activeID)
+                ? Parked(tabs: browser.tabs, active: browser.activeID, folders: browser.folders)
                 : browser.parked[space.id] ?? Parked(tabs: [], active: nil)
             let each = width(in: strip, pinned: row.tabs.filter { $0.pin != nil }.count, count: row.tabs.count)
             HStack(spacing: Metrics.tabGap) {
@@ -387,6 +387,12 @@ private struct TabPill: View {
                 .padding(.horizontal, 7)
                 .padding(.vertical, 6)
                 .frame(width: span)
+                .overlay(alignment: .bottom) {
+                    if tab.away { AwayDot(size: 4).offset(y: -2) }
+                }
+                .overlay(alignment: .topTrailing) {
+                    if browser.split(of: tab) != nil { SplitMark(size: 6).padding(2) }
+                }
             } else {
                 loose
             }
@@ -457,6 +463,7 @@ private struct TabPill: View {
                 if prefs.glyph == .icons, !tab.isBlank {
                     Mark(icon: tab.icon, letter: tab.monogram, size: 15)
                 }
+                if browser.split(of: tab) != nil { SplitMark() }
                 if tab.bench {
                     // A script's tab, not yours.
                     Image(systemName: "flask")
@@ -589,16 +596,27 @@ struct Carried: ViewModifier {
     /// The row's coordinate space, not the tab's: a tab that has just moved
     /// keeps its bearings (see the sidebar's grid).
     let space: String
+    /// In the column, the tab can be carried out of its section altogether
+    /// (see Carry). Nil in the top bar, which keeps to reordering.
+    var lift: Lifting? = nil
     let move: (Int) -> Void
 
     @State private var held = false
     @State private var from = 0
     @State private var travel: CGFloat = 0
+    /// The last place this drag asked for. A move may land elsewhere, as a
+    /// folder does beside another folder, and asking again every event
+    /// would bounce it.
+    @State private var asked: Int?
+    /// The number of rows when `asked` was asked for, because a move that
+    /// adds or drops a row changes what that number means.
+    @State private var askedCount = 0
+    @State private var lifted = false
 
     func body(content: Content) -> some View {
         // What it has travelled, less the ground its new place has already
         // given it.
-        let shift = held ? travel - CGFloat(index - from) * step : 0
+        let shift = held && !lifted ? travel - CGFloat(index - from) * step : 0
         return content
             .offset(x: vertical ? 0 : shift, y: vertical ? shift : 0)
             // Under the hand exactly. Its place in the row springs when it
@@ -609,16 +627,23 @@ struct Carried: ViewModifier {
             .transaction { if held { $0.animation = nil } }
             .zIndex(held ? 1 : 0)
             .shadow(color: .black.opacity(held ? 0.14 : 0), radius: 12, y: 4)
+            .opacity(lifted ? 0.35 : 1)
             .gesture(
                 DragGesture(minimumDistance: 5, coordinateSpace: .named(space))
                     .onChanged { value in
                         if !held {
                             held = true
                             from = index
+                            asked = index
+                            askedCount = count
                         }
                         travel = vertical ? value.translation.height : value.translation.width
-                        let target = min(max(0, from + Int((travel / step).rounded())), count - 1)
-                        if target != index {
+                        // Lifted out, the tab goes back where it started and
+                        // the section closes up; the chip is the tab now.
+                        let target = lifted ? from : min(max(0, from + Int((travel / step).rounded())), count - 1)
+                        if target != asked || count != askedCount {
+                            asked = target
+                            askedCount = count
                             withAnimation(Motion.settle) { move(target) }
                         }
                     }
@@ -626,9 +651,27 @@ struct Carried: ViewModifier {
                         withAnimation(Motion.settle) {
                             held = false
                             travel = 0
+                            asked = nil
                         }
                     }
             )
+            // The same drag, seen from the window, for carrying the tab out of
+            // its section: the section's own space can't say where the hand is
+            // once it has left.
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 5, coordinateSpace: .global)
+                    .onChanged { value in
+                        guard let lift else { return }
+                        lifted = lift.carry.move(lift.tab, from: lift.source, to: value.location)
+                    }
+                    .onEnded { _ in
+                        guard let lift else { return }
+                        lift.carry.end()
+                        lifted = false
+                    }
+            )
+            // Gone mid-drag, with no end to come (see Carry.cancel).
+            .onDisappear { if let lift { lift.carry.cancel(lift.tab) } }
     }
 }
 
@@ -749,13 +792,7 @@ struct TabMenu: View {
     let close: () -> Void
 
     var body: some View {
-        if tab.pin == nil {
-            Button("Pin") { browser.pin(tab) }
-                .disabled(tab.isBlank)
-        } else {
-            Button("Change Letter") { browser.editLetter(tab) }
-            Button("Unpin") { browser.unpin(tab) }
-        }
+        KeptTabCommands(browser: browser, tab: tab)
         Divider()
         Button("Rename") { browser.beginTabRename(tab) }
         Button("Duplicate") {
@@ -780,6 +817,11 @@ struct TabMenu: View {
         }
         .disabled(tab.isBlank)
         Button(tab.muted ? "Unmute Tab" : "Mute Tab") { tab.toggleMute() }
+        if browser.split(of: tab) != nil {
+            Button("Remove from Split") { browser.removeFromSplit(tab) }
+        } else if browser.canAddToSplit(tab) {
+            Button("Add to Split") { browser.addToSplit(tab) }
+        }
         Divider()
         Button("Close Tab", action: close)
         Button("Close Other Tabs") { browser.closeOthers(but: tab) }
@@ -960,6 +1002,54 @@ struct PinField: NSViewRepresentable {
         func controlTextDidEndEditing(_ note: Notification) {
             let browser = browser
             DispatchQueue.main.async { browser.endPinEdit() }
+        }
+    }
+}
+
+/// The kept-tab lines shared by the Tabs menu and a tab's right-click menu:
+/// watched as a tab, so Back to Pinned Page lights up the moment the page
+/// wanders off.
+struct KeptTabCommands: View {
+    @ObservedObject var browser: Browser
+    @ObservedObject var tab: Tab
+
+    var body: some View {
+        if tab.pin == nil {
+            Button("Add to Favorites") { browser.keep(tab, on: .favorites) }
+                .disabled(tab.isBlank)
+            Button("Pin") { browser.keep(tab, on: .pins) }
+                .disabled(tab.isBlank)
+        } else if tab.shelf == .favorites {
+            Button("Change Letter") { browser.editLetter(tab) }
+            Button("Move to Pins") { browser.keep(tab, on: .pins) }
+            Button("Remove from Favorites") { browser.unpin(tab) }
+        } else {
+            Button("Move to Favorites") { browser.keep(tab, on: .favorites) }
+            Button("New Folder with This Pin") { browser.newFolder(with: tab) }
+            // The way into a closed folder, and to the end of any: a drag
+            // reaches only the inside of an open one.
+            let elsewhere = browser.folders.filter { $0.id != tab.folder }
+            if !elsewhere.isEmpty {
+                Menu("Move to Folder") {
+                    ForEach(elsewhere) { folder in
+                        Button(folder.name) { browser.putInFolder(tab, folder.id) }
+                    }
+                }
+            }
+            if tab.folder != nil {
+                Button("Remove from Folder") { browser.putInFolder(tab, nil) }
+            }
+            Button("Unpin") { browser.unpin(tab) }
+        }
+        if tab.pin != nil {
+            Button("Back to Pinned Page") { browser.goHome(tab) }
+                .disabled(!tab.away)
+            // Offered away from home, and also to a kept tab with no home
+            // at all — one an extension pinned blank — which could never get
+            // one otherwise. Never on a page that can't be a home (about:blank,
+            // an extension's page): setHome would ignore it.
+            Button("Set Pinned Page to This Page") { browser.setHome(tab) }
+                .disabled(!Shelves.canBeHome(tab.address) || (tab.home != nil && !tab.away))
         }
     }
 }

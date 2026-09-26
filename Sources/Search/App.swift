@@ -117,19 +117,26 @@ struct SearchApp: App {
                     .keyboardShortcut("k")
                 Divider()
                 if let tab = browser.active {
-                    if tab.pin == nil {
-                        Button("Pin Tab") { browser.pin(tab) }
-                            .disabled(tab.isBlank)
-                    } else {
-                        Button("Change Letter") { browser.editLetter(tab) }
-                        Button("Unpin Tab") { browser.unpin(tab) }
-                    }
+                    KeptTabCommands(browser: browser, tab: tab)
                 }
                 Button("Rename Tab") { if let tab = browser.active { browser.beginTabRename(tab) } }
                     .disabled(browser.active == nil)
                 Button("Duplicate Tab") { browser.duplicate() }
                     .keyboardShortcut("d")
                     .disabled(browser.active?.isBlank ?? true)
+                Divider()
+                Button("New Split Pane") { browser.newSplitPane() }
+                    .keyboardShortcut("=", modifiers: [.control, .shift])
+                    .disabled(browser.active == nil)
+                Button("Remove from Split") { if let tab = browser.active { browser.removeFromSplit(tab) } }
+                    .keyboardShortcut("-", modifiers: [.control, .shift])
+                    .disabled(browser.activeSplit == nil)
+                Button("Next Pane") { browser.stepPane(1) }
+                    .keyboardShortcut("]", modifiers: [.control, .shift])
+                    .disabled(browser.activeSplit == nil)
+                Button("Previous Pane") { browser.stepPane(-1) }
+                    .keyboardShortcut("[", modifiers: [.control, .shift])
+                    .disabled(browser.activeSplit == nil)
                 Button("Copy Address") { browser.copyAddress() }
                     .keyboardShortcut("c", modifiers: [.command, .shift])
                     .disabled(browser.active?.isBlank ?? true)
@@ -286,6 +293,7 @@ struct ContentView: View {
             // again thirty times a second, the page juddered along its right
             // edge and overshot the window with the spring (see `room`).
             stage
+                .modifier(ReportFrame { browser.carry.areas.page = $0 })
                 .padding(.leading, roomed.width)
                 .padding(.top, roomed.height)
                 .offset(x: chrome.width - roomed.width, y: chrome.height - roomed.height)
@@ -321,24 +329,11 @@ struct ContentView: View {
 
     @ViewBuilder
     private var stage: some View {
-        if let tab = browser.active {
+        if let split = browser.activeSplit {
+            SplitStage(browser: browser, split: split)
+        } else if let tab = browser.active {
             Page(tab: tab)
-                .overlay {
-                    if browser.prefs.showsLinks { LinkBubble(status: browser.linkStatus) }
-                }
-                .overlay(alignment: .topTrailing) {
-                    if browser.finding {
-                        FindBar(browser: browser)
-                            .transition(.move(edge: .top).combined(with: .opacity))
-                    }
-                }
-                .overlay(alignment: .topLeading) {
-                    if let asked = browser.suggesting, asked.tab == tab.id {
-                        AccountList(browser: browser, asked: asked)
-                            .transition(.opacity)
-                    }
-                }
-                .animation(Motion.quick, value: browser.suggesting)
+                .modifier(PageOverlays(browser: browser, tab: tab))
         } else {
             Palette.ground
         }
@@ -479,6 +474,9 @@ struct ContentView: View {
             }
             .overlay { field }
             .overlay { panels }
+            // A tab carried out of its section: over everything, answering
+            // nothing — the drag that carries it keeps the mouse.
+            .overlay { DropLayer(browser: browser, carry: browser.carry).ignoresSafeArea() }
             // The field comes on its spring, and goes quickly: once Return
             // is pressed the page is on its way, and the field is not what
             // there is to watch.
@@ -892,6 +890,22 @@ struct ContentView: View {
            let number = ContentView.digits[event.keyCode], number > 0 {
             browser.switchSpace(index: number - 1)
             return true
+        }
+
+        // Split view: ⌃⇧= a new pane, ⌃⇧- out of the split, ⌃⇧] and ⌃⇧[
+        // between panes. By key code, so the keys are the same on any layout.
+        // With no split on screen, all but ⌃⇧= pass through to the page or an
+        // extension.
+        if flags.contains([.control, .shift]), flags.isDisjoint(with: [.command, .option]) {
+            switch event.keyCode {
+            case 24: browser.newSplitPane(); return true
+            case 27 where browser.activeSplit != nil:
+                if let tab = browser.active { browser.removeFromSplit(tab) }
+                return true
+            case 30 where browser.activeSplit != nil: browser.stepPane(1); return true
+            case 33 where browser.activeSplit != nil: browser.stepPane(-1); return true
+            default: break
+            }
         }
 
         // A shortcut an extension registered — ⌥⇧D, ⌃⇧Y — before ours, since

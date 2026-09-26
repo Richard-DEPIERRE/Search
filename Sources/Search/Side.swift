@@ -9,6 +9,15 @@ import SwiftUI
 struct SideBar: View {
     @ObservedObject var browser: Browser
     @ObservedObject var prefs: Preferences
+    /// A tab carried out of its section: the wells for an empty section show
+    /// while it is.
+    @ObservedObject var carry: Carry
+
+    init(browser: Browser, prefs: Preferences) {
+        self.browser = browser
+        self.prefs = prefs
+        self.carry = browser.carry
+    }
 
     @Namespace private var pill
 
@@ -27,11 +36,16 @@ struct SideBar: View {
     @State private var pinDragging: Tab.ID?
     @State private var pinFrom = 0
     @State private var pinTravel: CGSize = .zero
+    @State private var pinLifted = false
 
     private static let row: CGFloat = 28
     private static let gap: CGFloat = 2
     private static let square: CGFloat = 34
     private static let pinGap: CGFloat = 4
+    /// The line between the pins and the day's tabs, with its air.
+    private static let divider: CGFloat = 13
+    /// How far a folder's pins sit in from the folder's own row.
+    private static let indent: CGFloat = 14
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -99,6 +113,8 @@ struct SideBar: View {
         .animation(Motion.glide, value: browser.editingTab)
         .animation(Motion.settle, value: browser.tabs.map(\.id))
         .animation(Motion.settle, value: browser.pinnedCount)
+        .animation(Motion.settle, value: browser.favoriteCount)
+        .animation(Motion.quick, value: carry.wells)
     }
 
     /// The column's edge: pull it to make the column wider or narrower,
@@ -175,11 +191,15 @@ struct SideBar: View {
                 .frame(maxHeight: .infinity)
             } else if browser.spaces[index].id == browser.spaceID {
                 VStack(alignment: .leading, spacing: 0) {
-                    if browser.pinnedCount > 0 {
+                    if browser.favoriteCount > 0 {
                         pinned
                             .padding(.bottom, 10)
+                    } else if carry.wells {
+                        DropWell(title: "Favorites", height: SideBar.square)
+                            .modifier(ReportFrame { carry.favoritesWell = $0 })
+                            .padding(.bottom, 10)
                     }
-                    // A row too long for the window scrolls between the pins
+                    // A row too long for the window scrolls between the cards
                     // and the foot, rather than running under the lights at one
                     // end and the foot at the other. While it fits it stays a
                     // plain stack, and the space under it is still the
@@ -223,7 +243,8 @@ struct SideBar: View {
     /// two read as one column while they pass — and nothing to press until
     /// it is the one on screen.
     private func preview(_ row: Parked, pill: Namespace.ID) -> some View {
-        let pins = row.tabs.filter { $0.pin != nil }
+        let pins = row.tabs.filter { $0.pin != nil && $0.shelf == .favorites }
+        let pinsAsRows = row.tabs.filter { $0.pin != nil && $0.shelf == .pins }
         let rest = row.tabs.filter { $0.pin == nil }
         let cols = SideBar.pinColumns(pins.count)
         let width = pinWidth(for: pins.count)
@@ -240,9 +261,37 @@ struct SideBar: View {
                 }
                 .padding(.bottom, 10)
             }
+            if !pinsAsRows.isEmpty {
+                let drawn = Shelves.pinnedRows(Browser.slots(of: pinsAsRows), folders: row.folders, active: row.active)
+                VStack(spacing: SideBar.gap) {
+                    ForEach(drawn) { line in
+                        switch line {
+                        case .folder(let id):
+                            if let folder = row.folders.first(where: { $0.id == id }) {
+                                FolderRow(browser: browser, folder: folder)
+                            }
+                        case .pin(let id, let folder):
+                            if let tab = pinsAsRows.first(where: { $0.id == id }) {
+                                SideRow(browser: browser, prefs: prefs, tab: tab, live: tab.id == row.active, pill: pill, close: {})
+                                    .padding(.leading, folder == nil ? 0 : SideBar.indent)
+                            }
+                        }
+                    }
+                }
+                divider
+            }
             VStack(spacing: SideBar.gap) {
-                ForEach(rest) { tab in
-                    SideRow(browser: browser, prefs: prefs, tab: tab, live: tab.id == row.active, pill: pill, close: {})
+                ForEach(Splits.todayRows(rest.map(\.id), splits: row.splits)) { line in
+                    switch line {
+                    case .tab(let id):
+                        if let tab = rest.first(where: { $0.id == id }) {
+                            SideRow(browser: browser, prefs: prefs, tab: tab, live: tab.id == row.active, pill: pill, close: {})
+                        }
+                    case .split(let id):
+                        if let split = row.splits.first(where: { $0.id == id }) {
+                            SplitRow(browser: browser, split: split, tabs: row.tabs, interactive: false)
+                        }
+                    }
                 }
             }
             newTab
@@ -254,19 +303,19 @@ struct SideBar: View {
     /// from what was drawn rather than measured: a measurement would arrive a
     /// frame late, and for one frame the whole column would drag the window.
     private var rowsEnd: CGFloat {
-        let pins = browser.pinnedCount
-        let cols = SideBar.pinColumns(pins)
-        let pinRows = pins == 0 ? 0 : (pins + cols - 1) / cols
-        let pinBlock = pinRows == 0 ? 0
-            : CGFloat(pinRows) * pinHeight + CGFloat(pinRows - 1) * SideBar.pinGap + 10
-        let loose = CGFloat(browser.tabs.count - pins) * (SideBar.row + SideBar.gap)
-        return Metrics.strip + pinBlock + loose + SideBar.row + 8
+        let favorites = browser.favoriteCount
+        let cols = SideBar.pinColumns(favorites)
+        let gridRows = favorites == 0 ? 0 : (favorites + cols - 1) / cols
+        let grid = gridRows == 0 ? 0
+            : CGFloat(gridRows) * pinHeight + CGFloat(gridRows - 1) * SideBar.pinGap + 10
+        let loose = CGFloat(browser.todayRows.count) * (SideBar.row + SideBar.gap)
+        return Metrics.strip + grid + pinBlock + loose + SideBar.row + 8
     }
 
     // MARK: - the pinned squares
 
-    private var pinnedTabs: [Tab] { browser.tabs.filter { $0.pin != nil } }
-    private var looseTabs: [Tab] { browser.tabs.filter { $0.pin == nil } }
+    private var favoriteTabs: [Tab] { browser.tabs.filter { $0.pin != nil && $0.shelf == .favorites } }
+    private var pinTabs: [Tab] { browser.tabs.filter { $0.pin != nil && $0.shelf == .pins } }
 
     /// Three columns is the block's own shape — up to six pins, that's two
     /// full rows, and one or two is just those same three places with a
@@ -281,7 +330,7 @@ struct SideBar: View {
     /// width between them — the row is what fills edge to edge, not each
     /// cell on its own, so this grows past 34 just as readily as it shrinks
     /// below it.
-    private var pinWidth: CGFloat { pinWidth(for: browser.pinnedCount) }
+    private var pinWidth: CGFloat { pinWidth(for: browser.favoriteCount) }
 
     private func pinWidth(for count: Int) -> CGFloat {
         let cols = SideBar.pinColumns(count)
@@ -302,7 +351,7 @@ struct SideBar: View {
     /// The grid itself: fixed-size cells, left-aligned, so a half-empty last
     /// row holds its ground rather than stretching to fill it.
     private var pinned: some View {
-        let tabs = pinnedTabs
+        let tabs = favoriteTabs
         let cols = SideBar.pinColumns(tabs.count)
         let width = pinWidth
         let height = pinHeight
@@ -327,10 +376,25 @@ struct SideBar: View {
                 .transaction { if held { $0.animation = nil } }
                 .zIndex(held ? 1 : 0)
                 .shadow(color: .black.opacity(held ? 0.16 : 0), radius: 10, y: 3)
+                .opacity(held && pinLifted ? 0.35 : 1)
                 .gesture(pinReorder(tab: tab, index: index, columns: cols, width: width, height: height))
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 5, coordinateSpace: .global)
+                        .onChanged { value in pinLifted = carry.move(tab, from: .favorite, to: value.location) }
+                        .onEnded { _ in
+                            carry.end()
+                            pinLifted = false
+                        }
+                )
+                .onDisappear { carry.cancel(tab) }
             }
         } }
         .coordinateSpace(name: "pins")
+        .modifier(ReportFrame { frame in
+            carry.areas.favorites = frame
+            carry.areas.favoriteColumns = cols
+            carry.areas.favoriteStep = CGSize(width: width + SideBar.pinGap, height: height + SideBar.pinGap)
+        })
     }
 
     /// The one square actually held stays glued to the fingers; every other
@@ -339,7 +403,7 @@ struct SideBar: View {
     /// the held square already got for free by changing index underneath
     /// its own drag.
     private func pinOffset(held: Bool, index: Int, columns: Int) -> CGSize {
-        guard held else { return .zero }
+        guard held, !pinLifted else { return .zero }
         let stepX = pinWidth + SideBar.pinGap
         let stepY = pinHeight + SideBar.pinGap
         let from = (row: pinFrom / columns, col: pinFrom % columns)
@@ -362,7 +426,7 @@ struct SideBar: View {
     }
 
     private func pinTarget(from: Int, moved: Int) -> Int {
-        min(max(0, from + moved), max(0, pinnedTabs.count - 1))
+        min(max(0, from + moved), max(0, favoriteTabs.count - 1))
     }
 
     /// Pick a square up and the others make way — across a row, and down
@@ -377,7 +441,8 @@ struct SideBar: View {
                 pinTravel = value.translation
                 let stepX = width + SideBar.pinGap
                 let stepY = height + SideBar.pinGap
-                let target = pinTarget(from: pinFrom, moved: pinDelta(columns: columns, stepX: stepX, stepY: stepY))
+                // Lifted out of the grid, the card goes back to its cell.
+                let target = pinLifted ? pinFrom : pinTarget(from: pinFrom, moved: pinDelta(columns: columns, stepX: stepX, stepY: stepY))
                 if target != index {
                     withAnimation(Motion.settle) {
                         browser.move(tab, to: target)
@@ -395,34 +460,109 @@ struct SideBar: View {
     // MARK: - the rows
 
     private var loose: some View {
-        VStack(spacing: SideBar.gap) {
+        let rows = browser.todayRows
+        let step = SideBar.row + SideBar.gap
+        return VStack(spacing: SideBar.gap) {
             // See the grid: the drag is measured in the column's space, not
             // the row's, so a row that has just moved keeps its bearings.
-            ForEach(Array(looseTabs.enumerated()), id: \.element.id) { index, tab in
-                let step = SideBar.row + SideBar.gap
-                SideRow(
-                    browser: browser,
-                    prefs: prefs,
-                    tab: tab,
-                    live: tab.id == browser.activeID,
-                    pill: pill,
-                    close: { browser.close(tab) }
-                )
-                // Positions here are among the loose rows; the pinned block
-                // sits in front of them in the real list.
-                .modifier(Carried(index: index, count: looseTabs.count, step: step, vertical: true, space: "rows") {
-                    browser.move(tab, to: $0 + browser.pinnedCount)
-                })
+            // Positions are among today's rows as drawn: a split's row is one
+            // line, and a tab carried past it passes it whole.
+            ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                switch row {
+                case .tab(let id):
+                    if let tab = browser.tabs.first(where: { $0.id == id }) {
+                        SideRow(browser: browser, prefs: prefs, tab: tab, live: tab.id == browser.activeID, pill: pill, close: { browser.close(tab) })
+                        .modifier(Carried(index: index, count: rows.count, step: step, vertical: true, space: "rows", lift: Lifting(carry: carry, tab: tab, source: .today)) {
+                            browser.moveTodayRow(tab, to: $0)
+                        })
+                    }
+                case .split(let id):
+                    if let split = browser.splits.first(where: { $0.id == id }) {
+                        SplitRow(browser: browser, split: split, tabs: browser.tabs, interactive: true)
+                    }
+                }
             }
         }
         .coordinateSpace(name: "rows")
     }
 
-    /// The loose tabs and the row that makes another, which scroll as one.
+    /// The pins: rows under the cards, for the pages kept all day that want
+    /// their titles rather than a letter, and the folders that hold some of
+    /// them — each folder's row, then its pins, indented, while it is open.
+    /// A pin and a folder are carried the same way, through the rows as
+    /// drawn; where one is let go decides its folder (see Shelves.movePin).
+    private var pinRows: some View {
+        let rows = browser.pinnedRows
+        let step = SideBar.row + SideBar.gap
+        return VStack(spacing: SideBar.gap) {
+            ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                switch row {
+                case .folder(let id):
+                    if let folder = browser.folders.first(where: { $0.id == id }) {
+                        FolderRow(browser: browser, folder: folder)
+                            .modifier(Carried(index: index, count: rows.count, step: step, vertical: true, space: "pinRows") {
+                                browser.moveFolderRow(id, to: $0)
+                            })
+                    }
+                case .pin(let id, let folder):
+                    if let tab = browser.tabs.first(where: { $0.id == id }) {
+                        SideRow(
+                            browser: browser,
+                            prefs: prefs,
+                            tab: tab,
+                            live: tab.id == browser.activeID,
+                            pill: pill,
+                            close: { browser.close(tab) }
+                        )
+                        .padding(.leading, folder == nil ? 0 : SideBar.indent)
+                        .modifier(Carried(index: index, count: rows.count, step: step, vertical: true, space: "pinRows", lift: Lifting(carry: carry, tab: tab, source: .pin)) {
+                            browser.movePinRow(tab, to: $0)
+                        })
+                    }
+                }
+            }
+        }
+        .coordinateSpace(name: "pinRows")
+        .modifier(ReportFrame { carry.areas.pins = $0 })
+    }
+
+    /// Between the pins and the day's tabs, and only when there are pins.
+    private var divider: some View {
+        Rectangle()
+            .fill(Palette.hairline)
+            .frame(height: 1)
+            .padding(.horizontal, 10)
+            .frame(height: SideBar.divider)
+    }
+
+    /// The pinned rows as drawn (folder rows and the pins on show) and their
+    /// divider — not drawn on its own; `rowsEnd` adds this up from the same
+    /// constants the pins and the divider are actually drawn with, so a
+    /// change to one of those has to be made in the other too.
+    private var pinBlock: CGFloat {
+        let rows = CGFloat(browser.pinnedRows.count)
+        return rows == 0 ? 0 : rows * (SideBar.row + SideBar.gap) - SideBar.gap + SideBar.divider
+    }
+
+    /// The pins and their line, then the loose tabs and the row that makes
+    /// another, which scroll as one.
     private var rows: some View {
         VStack(alignment: .leading, spacing: 0) {
-            loose
-            newTab
+            if browser.pinCount > 0 {
+                pinRows
+                divider
+            } else if carry.wells {
+                DropWell(title: "Pins", height: SideBar.row)
+                    .modifier(ReportFrame { carry.pinsWell = $0 })
+                divider
+            }
+            // Today's rows and the row that makes another, as one place to
+            // drop: letting go over "New tab" puts a tab last.
+            VStack(alignment: .leading, spacing: 0) {
+                loose
+                newTab
+            }
+            .modifier(ReportFrame { carry.areas.today = $0 })
         }
     }
 
@@ -526,6 +666,12 @@ private struct PinSquare: View {
                     .fill(hovering ? Palette.hover : Palette.wash.opacity(0.55))
             }
         }
+        .overlay(alignment: .bottom) {
+            if tab.away { AwayDot(size: max(3, scale * 4 / 34)).offset(y: -scale * 3 / 34) }
+        }
+        .overlay(alignment: .topTrailing) {
+            if browser.split(of: tab) != nil { SplitMark(size: max(6, scale * 7 / 34)).padding(scale * 3 / 34) }
+        }
         .contentShape(RoundedRectangle(cornerRadius: scale * 9 / 34, style: .continuous))
         .modifier(OneClick(double: live) {
             if live { browser.editLetter(tab) } else { browser.select(tab) }
@@ -537,6 +683,19 @@ private struct PinSquare: View {
         .help(tab.label)
         .animation(Motion.quick, value: hovering)
         .transition(.scale(scale: 0.8).combined(with: .opacity))
+    }
+}
+
+/// Under a favorite that has left its page: a small mark, not a badge —
+/// enough to find the square that isn't where you left it.
+struct AwayDot: View {
+    let size: CGFloat
+
+    var body: some View {
+        Circle()
+            .fill(Palette.muted)
+            .frame(width: size, height: size)
+            .accessibilityLabel("Away from its pinned page")
     }
 }
 
@@ -554,6 +713,15 @@ private struct SideRow: View {
 
     private var editing: Bool { browser.editingTab == tab.id }
 
+    /// A pin, drawn as a row: its icon always, no cross — ⌘W or a
+    /// middle-click puts it down — and in the cross's place, while it is
+    /// away from its page, the way back.
+    private var kept: Bool { tab.pin != nil }
+
+    /// What sits at the row's end and takes the title's last few points: the
+    /// cross under the pointer, or a pin's way back while it is away.
+    private var endMark: Bool { kept ? tab.away : hovering }
+
     /// The ring or the speaker, which stay for as long as the page loads or
     /// plays (or is muted) and so keep a place of their own at the end of the
     /// row. The cross is only there under the pointer, and takes none.
@@ -562,15 +730,19 @@ private struct SideRow: View {
     /// under the pointer rather than hiding beneath it as the ring does.
     private var speaker: Bool { !tab.loading && (tab.noisy || tab.muted) }
 
+    /// In the split on screen, though not the pane you are on.
+    private var onScreen: Bool { !live && browser.activeSplit?.tabs.contains(tab.id) == true }
+
     var body: some View {
         HStack(spacing: 8) {
             if editing {
                 TabAddressField(browser: browser)
                     .frame(height: 16)
             } else {
-                if prefs.glyph == .icons, !tab.isBlank {
+                if prefs.glyph == .icons || kept, !tab.isBlank {
                     Mark(icon: tab.icon, letter: tab.monogram, size: 15)
                 }
+                if browser.split(of: tab) != nil { SplitMark() }
                 if tab.bench {
                     // A script's tab, not yours.
                     Image(systemName: "flask")
@@ -602,8 +774,8 @@ private struct SideRow: View {
                 .frame(width: 15, height: 15)
                 // The cross takes this place while the pointer is here; the
                 // speaker moves one place in, clear of the cross's reach.
-                .opacity(hovering && !speaker ? 0 : 1)
-                .padding(.trailing, hovering && speaker ? 23 : 0)
+                .opacity(endMark && !speaker ? 0 : 1)
+                .padding(.trailing, endMark && speaker ? 23 : 0)
             }
         }
         .padding(.leading, 10)
@@ -615,7 +787,7 @@ private struct SideRow: View {
         // doesn't jump on each row the pointer passes.
         .mask {
             ZStack {
-                Rectangle().opacity(hovering && !editing && !status ? 0 : 1)
+                Rectangle().opacity(endMark && !editing && !status ? 0 : 1)
                 HStack(spacing: 0) {
                     Rectangle()
                     LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing)
@@ -626,33 +798,55 @@ private struct SideRow: View {
         }
         .overlay(alignment: .trailing) {
             if !editing {
-                ZStack {
-                    if hovering {
-                        Image(systemName: "xmark")
+                if kept {
+                    if tab.away {
+                        Image(systemName: "arrow.uturn.backward")
                             .font(.system(size: 8, weight: .semibold))
                             .foregroundStyle(Palette.muted)
                             .frame(width: 15, height: 15)
-                            .background(Palette.ink.opacity(0.07), in: Circle())
+                            .background(Palette.ink.opacity(hovering ? 0.07 : 0), in: Circle())
+                            .overlay {
+                                Color.clear
+                                    .frame(width: 30, height: 28)
+                                    .contentShape(Rectangle())
+                                    .onTapGesture { browser.goHome(tab) }
+                            }
+                            .help("Back to Pinned Page")
+                            .padding(.trailing, 7)
                             .transition(.opacity)
                     }
+                } else {
+                    ZStack {
+                        if hovering {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 8, weight: .semibold))
+                                .foregroundStyle(Palette.muted)
+                                .frame(width: 15, height: 15)
+                                .background(Palette.ink.opacity(0.07), in: Circle())
+                                .transition(.opacity)
+                        }
+                    }
+                    .frame(width: 15, height: 15)
+                    .overlay {
+                        Color.clear
+                            .frame(width: 30, height: 28)
+                            .contentShape(Rectangle())
+                            .onTapGesture { if hovering { close() } }
+                    }
+                    .padding(.trailing, 7)
                 }
-                .frame(width: 15, height: 15)
-                .overlay {
-                    Color.clear
-                        .frame(width: 30, height: 28)
-                        .contentShape(Rectangle())
-                        .onTapGesture { if hovering { close() } }
-                }
-                .padding(.trailing, 7)
             }
         }
+        .animation(Motion.quick, value: tab.away)
         .animation(Motion.quick, value: tab.loading)
         .animation(Motion.quick, value: speaker)
         .background { ground }
         .modifier(Shake(travel: shake))
         .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-        .modifier(OneClick(double: false) {
-            if live { browser.beginTabEdit(tab) } else { browser.select(tab) }
+        // A pin you are on is renamed with a double-click, as a card has its
+        // letter changed; a tab you are on turns into its address.
+        .modifier(OneClick(double: live && kept) {
+            if !live { browser.select(tab) } else if kept { browser.beginTabRename(tab) } else { browser.beginTabEdit(tab) }
         })
         .overlay { MiddleClick(act: close) }
         .onHover { hovering = $0 }
@@ -683,6 +877,9 @@ private struct SideRow: View {
             }
             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
             .matchedGeometryEffect(id: "live", in: pill)
+        } else if onScreen {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(Palette.wash.opacity(0.5))
         } else if hovering {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
                 .fill(Palette.hover)
@@ -781,5 +978,247 @@ struct Door: View {
         .help(help)
         .animation(Motion.quick, value: hovering)
         .animation(Motion.quick, value: on)
+    }
+}
+
+/// A folder among the pins, as a line in the column. A click opens or closes
+/// it, a double-click renames it; the single click waits the moment a double
+/// one takes to rule itself out.
+private struct FolderRow: View {
+    @ObservedObject var browser: Browser
+    let folder: Folder
+
+    @State private var hovering = false
+
+    private var editing: Bool { browser.editingFolder == folder.id }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "chevron.right")
+                .font(.system(size: 8, weight: .semibold))
+                .rotationEffect(.degrees(folder.open ? 90 : 0))
+                .frame(width: 10)
+            Image(systemName: "folder")
+                .font(.system(size: 11))
+            if editing {
+                FolderField(browser: browser, folder: folder)
+                    .frame(height: 16)
+            } else {
+                Text(folder.name)
+                    .font(.system(size: 12.5))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(hovering || editing ? Palette.ink.opacity(0.7) : Palette.muted)
+        .padding(.horizontal, 10)
+        .frame(height: 28)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            if hovering {
+                RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Palette.hover)
+            }
+        }
+        .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .gesture(
+            TapGesture(count: 2)
+                .onEnded { browser.beginFolderRename(folder.id) }
+                .exclusively(before: TapGesture().onEnded {
+                    withAnimation(Motion.settle) { browser.toggleFolder(folder.id) }
+                })
+        )
+        .onHover { hovering = $0 }
+        .contextMenu {
+            Button("Rename Folder") { browser.beginFolderRename(folder.id) }
+            Button("Delete Folder") { browser.deleteFolder(folder.id) }
+        }
+        .animation(Motion.quick, value: hovering)
+        .animation(Motion.quick, value: folder.open)
+    }
+}
+
+/// A folder's name, typed over in place. It arrives selected, so a keystroke
+/// replaces it. Return, Tab or a click elsewhere keeps what was typed; Escape
+/// keeps the old name.
+private struct FolderField: NSViewRepresentable {
+    @ObservedObject var browser: Browser
+    let folder: Folder
+
+    func makeCoordinator() -> Coordinator { Coordinator(browser: browser, id: folder.id) }
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField()
+        field.delegate = context.coordinator
+        field.isBordered = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.font = .systemFont(ofSize: 12.5)
+        field.textColor = Palette.NS.ink
+        field.cell?.usesSingleLineMode = true
+        field.cell?.wraps = false
+        field.cell?.isScrollable = true
+        field.stringValue = folder.name
+        return field
+    }
+
+    func updateNSView(_ field: NSTextField, context: Context) {
+        let coordinator = context.coordinator
+        coordinator.browser = browser
+        guard !coordinator.claimed else { return }
+        coordinator.claimed = true
+        DispatchQueue.main.async {
+            field.window?.makeFirstResponder(field)
+            field.currentEditor()?.selectAll(nil)
+        }
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var browser: Browser
+        let id: UUID
+        var claimed = false
+        var cancelled = false
+
+        init(browser: Browser, id: UUID) {
+            self.browser = browser
+            self.id = id
+        }
+
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy command: Selector) -> Bool {
+            switch command {
+            case #selector(NSResponder.insertNewline(_:)), #selector(NSResponder.insertTab(_:)):
+                control.window?.makeFirstResponder(nil)
+                return true
+            case #selector(NSResponder.cancelOperation(_:)):
+                cancelled = true
+                control.window?.makeFirstResponder(nil)
+                return true
+            default:
+                return false
+            }
+        }
+
+        func controlTextDidEndEditing(_ note: Notification) {
+            guard let field = note.object as? NSTextField else { return }
+            if !cancelled { browser.renameFolder(id, to: field.stringValue) }
+            // Only its own edit: Rename chosen on another folder meanwhile
+            // has already moved the field on.
+            if browser.editingFolder == id { browser.endFolderEdit() }
+        }
+    }
+}
+
+/// A split as one line among today's tabs: a segment for each pane, left to
+/// right as they sit on screen. A click shows the split with that pane in
+/// front; its cross, or a middle-click, closes that pane's tab.
+private struct SplitRow: View {
+    @ObservedObject var browser: Browser
+    let split: Split
+    /// Where to find the split's tabs: this space's row, or a parked one's.
+    let tabs: [Tab]
+    /// Off for another space's preview, which answers nothing.
+    let interactive: Bool
+
+    private var onScreen: Bool { interactive && browser.activeSplit?.id == split.id }
+
+    var body: some View {
+        GeometryReader { geo in
+            let panes = split.tabs.compactMap { id in tabs.first { $0.id == id } }
+            let each = panes.isEmpty ? geo.size.width : geo.size.width / CGFloat(panes.count)
+            HStack(spacing: 0) {
+                ForEach(Array(panes.enumerated()), id: \.element.id) { index, tab in
+                    if index > 0 {
+                        Rectangle().fill(Palette.hairline).frame(width: 1, height: 14)
+                    }
+                    SplitSegment(browser: browser, tab: tab, split: split, iconOnly: each < 60,
+                                 focused: onScreen && tab.id == browser.activeID, interactive: interactive)
+                        .frame(width: max(0, each - (index > 0 ? 1 : 0)))
+                }
+            }
+        }
+        // SideBar.row is private to SideBar; a split's row outside it uses
+        // the same 28 the rest of this file's rows are drawn with.
+        .frame(height: 28)
+        .background {
+            if onScreen {
+                RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Palette.wash)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Split view")
+        .modifier(ReportFrame { frame in
+            if interactive { browser.carry.areas.splitRows[split.id] = frame }
+        })
+    }
+}
+
+/// One pane of a split's row.
+private struct SplitSegment: View {
+    @ObservedObject var browser: Browser
+    @ObservedObject var tab: Tab
+    let split: Split
+    let iconOnly: Bool
+    let focused: Bool
+    let interactive: Bool
+
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Mark(icon: tab.icon, letter: tab.monogram, size: 14)
+            if !iconOnly {
+                Text(tab.label)
+                    .font(.system(size: 12))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .foregroundStyle(focused ? Palette.ink : Palette.muted)
+            }
+            Spacer(minLength: 0)
+            if hovering && interactive && !iconOnly {
+                Image(systemName: "xmark")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(Palette.muted)
+                    .frame(width: 15, height: 15)
+                    .background(Palette.ink.opacity(0.07), in: Circle())
+                    .contentShape(Rectangle())
+                    .onTapGesture { browser.close(tab) }
+            }
+        }
+        .padding(.horizontal, iconOnly ? 0 : 8)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: iconOnly ? .center : .leading)
+        .background {
+            if focused {
+                RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Palette.ink.opacity(0.06)).padding(2)
+            } else if hovering && interactive {
+                RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Palette.hover).padding(2)
+            }
+        }
+        .contentShape(Rectangle())
+        // Pulled away, the pane is carried out of its split at once: a split's
+        // row has no order of its own to make way in.
+        .gesture(
+            DragGesture(minimumDistance: 5, coordinateSpace: .global)
+                .onChanged { value in
+                    guard interactive else { return }
+                    browser.carry.move(tab, from: .pane(split: split.id, was: browser.dragSource(of: tab)), to: value.location)
+                }
+                .onEnded { _ in
+                    if interactive { browser.carry.end() }
+                }
+        )
+        .onDisappear { if interactive { browser.carry.cancel(tab) } }
+        .onTapGesture { if interactive { browser.select(tab) } }
+        .overlay { if interactive { MiddleClick { browser.close(tab) } } }
+        .onHover { hovering = $0 }
+        .contextMenu {
+            if interactive {
+                TabMenu(browser: browser, tab: tab, close: { browser.close(tab) })
+                Divider()
+                Button("Separate Split") { browser.separateSplit(split.id) }
+            }
+        }
+        .help(tab.label)
+        .accessibilityLabel(tab.label)
+        .animation(Motion.quick, value: hovering)
     }
 }
