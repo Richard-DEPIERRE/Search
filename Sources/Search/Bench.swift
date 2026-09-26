@@ -430,9 +430,21 @@ final class Bench {
                             "focused": id == browser.activeID,
                         ]
                     },
+                    "rows": browser.todayRows.map { row -> String in
+                        switch row {
+                        case .tab(let id):
+                            return "TAB " + (browser.tabs.first { $0.id == id }.map(Bench.short) ?? "?")
+                        case .split(let id):
+                            let members = browser.splits.first { $0.id == id }?.tabs ?? []
+                            return "SPLIT " + members.map { member in browser.tabs.first { $0.id == member }.map(Bench.short) ?? "?" }.joined(separator: "|")
+                        }
+                    },
                 ])
             }
             switch request["what"] as? String ?? "list" {
+            case "separate":
+                guard let split = browser.activeSplit else { answer(["error": "no split on screen"]); return }
+                browser.separateSplit(split.id)
             case "new": browser.newSplitPane()
             case "add":
                 guard let tab = find(request, in: browser) else { answer(missing(request)); return }
@@ -473,7 +485,7 @@ final class Bench {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: respond)
                 return
             case "list": break
-            default: answer(["error": "split needs new, add, remove, focus, resize, even, click or list"]); return
+            default: answer(["error": "split needs new, add, remove, focus, resize, even, click, separate or list"]); return
             }
             respond()
 

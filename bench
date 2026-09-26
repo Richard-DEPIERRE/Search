@@ -23,7 +23,7 @@
     ./bench folder new ID NAME | into ID NAME | out ID | toggle NAME | delete NAME | rename NAME NEW
                  | drag ID INDEX | dragfolder NAME INDEX | rows
                                        folders of pins, and the pinned rows as drawn — --test runs only
-    ./bench split new|add ID|remove ID|focus ID|resize DIVIDER FRACTION|even|click INDEX|list
+    ./bench split new|add ID|remove ID|focus ID|resize DIVIDER FRACTION|even|click INDEX|separate|list
                                        split view, and each pane's share and place in the window — --test runs only
     ./bench probe                      the window's own state: panels, modal, windows
     ./bench extensions                 installed extensions, loaded or not, with their warnings
@@ -155,9 +155,9 @@ def main(argv):
         elif what == "dragfolder": request["name"], request["index"] = a[0], int(a[1])
     elif verb == "split":
         what, a = (args[0], args[1:]) if args else ("list", [])
-        need = {"new": 0, "add": 1, "remove": 1, "focus": 1, "resize": 2, "even": 0, "click": 1, "list": 0}
+        need = {"new": 0, "add": 1, "remove": 1, "focus": 1, "resize": 2, "even": 0, "click": 1, "separate": 0, "list": 0}
         if what not in need or len(a) != need[what]:
-            sys.exit("usage: bench split new|add ID|remove ID|focus ID|resize DIVIDER FRACTION|even|click INDEX|list")
+            sys.exit("usage: bench split new|add ID|remove ID|focus ID|resize DIVIDER FRACTION|even|click INDEX|separate|list")
         request["what"] = what
         if what in ("add", "remove", "focus"): request["id"] = a[0]
         elif what == "resize": request["divider"], request["fraction"] = int(a[0]), float(a[1])
@@ -327,6 +327,8 @@ def main(argv):
         print(f"splits {answer.get('splits')}  active {answer.get('active')}")
         for p in answer.get("panes", []):
             print(f"{'▶' if p.get('focused') else ' '} {p['id']}  share {p['width']:.2f}  x {p['x']:.0f}  w {p['w']:.0f}")
+        for r in answer.get("rows", []):
+            print("  row " + r)
     elif verb == "tabs":
         for tab in answer.get("tabs", []):
             mark = "⚗" if tab.get("bench") else ("●" if tab.get("active") else " ")
