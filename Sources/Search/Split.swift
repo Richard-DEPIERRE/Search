@@ -150,3 +150,15 @@ private struct SplitDivider: View {
             .animation(Motion.quick, value: hovering)
     }
 }
+
+/// On a tab in a split, wherever the tab is drawn: small, and quiet.
+struct SplitMark: View {
+    var size: CGFloat = 9
+
+    var body: some View {
+        Image(systemName: "rectangle.split.2x1")
+            .font(.system(size: size))
+            .foregroundStyle(Palette.muted)
+            .accessibilityLabel("In a split")
+    }
+}

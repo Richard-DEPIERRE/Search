@@ -390,6 +390,9 @@ private struct TabPill: View {
                 .overlay(alignment: .bottom) {
                     if tab.away { AwayDot(size: 4).offset(y: -2) }
                 }
+                .overlay(alignment: .topTrailing) {
+                    if browser.split(of: tab) != nil { SplitMark(size: 6).padding(2) }
+                }
             } else {
                 loose
             }
@@ -460,6 +463,7 @@ private struct TabPill: View {
                 if prefs.glyph == .icons, !tab.isBlank {
                     Mark(icon: tab.icon, letter: tab.monogram, size: 15)
                 }
+                if browser.split(of: tab) != nil { SplitMark() }
                 if tab.bench {
                     // A script's tab, not yours.
                     Image(systemName: "flask")

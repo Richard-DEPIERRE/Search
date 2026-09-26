@@ -617,6 +617,9 @@ private struct PinSquare: View {
         .overlay(alignment: .bottom) {
             if tab.away { AwayDot(size: max(3, scale * 4 / 34)).offset(y: -scale * 3 / 34) }
         }
+        .overlay(alignment: .topTrailing) {
+            if browser.split(of: tab) != nil { SplitMark(size: max(6, scale * 7 / 34)).padding(scale * 3 / 34) }
+        }
         .contentShape(RoundedRectangle(cornerRadius: scale * 9 / 34, style: .continuous))
         .modifier(OneClick(double: live) {
             if live { browser.editLetter(tab) } else { browser.select(tab) }
@@ -675,6 +678,9 @@ private struct SideRow: View {
     /// under the pointer rather than hiding beneath it as the ring does.
     private var speaker: Bool { !tab.loading && (tab.noisy || tab.muted) }
 
+    /// In the split on screen, though not the pane you are on.
+    private var onScreen: Bool { !live && browser.activeSplit?.tabs.contains(tab.id) == true }
+
     var body: some View {
         HStack(spacing: 8) {
             if editing {
@@ -684,6 +690,7 @@ private struct SideRow: View {
                 if prefs.glyph == .icons || kept, !tab.isBlank {
                     Mark(icon: tab.icon, letter: tab.monogram, size: 15)
                 }
+                if browser.split(of: tab) != nil { SplitMark() }
                 if tab.bench {
                     // A script's tab, not yours.
                     Image(systemName: "flask")
@@ -818,6 +825,9 @@ private struct SideRow: View {
             }
             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
             .matchedGeometryEffect(id: "live", in: pill)
+        } else if onScreen {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(Palette.wash.opacity(0.5))
         } else if hovering {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
                 .fill(Palette.hover)
