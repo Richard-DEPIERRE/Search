@@ -103,3 +103,138 @@ struct ReportFrame: ViewModifier {
         }
     }
 }
+
+/// An empty section while a tab is carried: somewhere to let it go.
+struct DropWell: View {
+    let title: String
+    let height: CGFloat
+
+    var body: some View {
+        Text(title)
+            .font(.system(size: 12))
+            .foregroundStyle(Palette.muted)
+            .frame(maxWidth: .infinity)
+            .frame(height: height)
+            .overlay(
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .strokeBorder(Palette.hairline, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+            )
+            .transition(.opacity)
+    }
+}
+
+/// Over the whole window while a tab is carried out of its section: the tab
+/// under the hand, and a mark where it would go if let go now — none where
+/// letting go would do nothing.
+struct DropLayer: View {
+    @ObservedObject var browser: Browser
+    @ObservedObject var carry: Carry
+
+    var body: some View {
+        GeometryReader { geo in
+            // The layer's own place in the window, taken off every frame the
+            // areas reported, which are the window's.
+            let origin = geo.frame(in: .global).origin
+            ZStack(alignment: .topLeading) {
+                Color.clear
+                if carry.lifted, let tab = carry.tab {
+                    if let target = carry.target, let source = carry.source,
+                       Drops.resolve(source: source, target: target, tab: tab.id, active: browser.activeID, splits: browser.splits) != .none {
+                        mark(for: target, areas: carry.effective)
+                            .offset(x: -origin.x, y: -origin.y)
+                    }
+                    Chip(tab: tab, hand: carry.hand, origin: origin)
+                }
+            }
+        }
+        .allowsHitTesting(false)
+        .animation(Motion.quick, value: carry.target)
+        .animation(Motion.quick, value: carry.lifted)
+    }
+
+    /// Drawn in the window's own coordinates; the caller moves it into the
+    /// layer's.
+    @ViewBuilder
+    private func mark(for target: DropTarget, areas: DropAreas) -> some View {
+        switch target {
+        case .favorites(let i):
+            if let f = areas.favorites {
+                if areas.favoriteStep == .zero {
+                    outline(f)
+                } else {
+                    let columns = max(1, areas.favoriteColumns)
+                    let x = f.minX + CGFloat(i % columns) * areas.favoriteStep.width - 2
+                    let y = f.minY + CGFloat(i / columns) * areas.favoriteStep.height
+                    Rectangle().fill(Palette.ink)
+                        .frame(width: 2, height: areas.favoriteStep.height - 4)
+                        .offset(x: x - 1, y: y)
+                }
+            }
+        case .pins(let i):
+            if let f = areas.pins {
+                if browser.pinCount == 0 {
+                    outline(f)
+                } else {
+                    let open = Set(browser.folders.filter(\.open).map(\.id))
+                    let indent: CGFloat = Drops.pinLineFolder(browser.pinnedRows, at: i, open: open) == nil ? 0 : 14
+                    line(in: f, at: i, indent: indent)
+                }
+            }
+        case .today(let i):
+            if let f = areas.today { line(in: f, at: i, indent: 0) }
+        case .splitRow(let id):
+            if let f = areas.splitRows[id] { outline(f) }
+        case .page(let side):
+            if let f = areas.page {
+                let half = CGRect(x: side == .left ? f.minX : f.midX, y: f.minY, width: f.width / 2, height: f.height)
+                ZStack {
+                    Rectangle().fill(Palette.ink.opacity(0.06))
+                    Image(systemName: "rectangle.split.2x1")
+                        .font(.system(size: 28, weight: .light))
+                        .foregroundStyle(Palette.muted)
+                }
+                .frame(width: half.width, height: half.height)
+                .offset(x: half.minX, y: half.minY)
+            }
+        }
+    }
+
+    /// Between two rows: centred in the gap above row `i`.
+    private func line(in frame: CGRect, at i: Int, indent: CGFloat) -> some View {
+        Rectangle().fill(Palette.ink)
+            .frame(width: max(0, frame.width - indent), height: 2)
+            .offset(x: frame.minX + indent, y: frame.minY + CGFloat(i) * DropAreas.step - 2)
+    }
+
+    private func outline(_ frame: CGRect) -> some View {
+        RoundedRectangle(cornerRadius: 9, style: .continuous)
+            .stroke(Palette.ink, lineWidth: 1.5)
+            .frame(width: frame.width, height: frame.height)
+            .offset(x: frame.minX, y: frame.minY)
+    }
+}
+
+/// The carried tab, just right of the hand.
+private struct Chip: View {
+    let tab: Tab
+    @ObservedObject var hand: Carry.Hand
+    let origin: CGPoint
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Mark(icon: tab.icon, letter: tab.monogram, size: 14)
+            Text(String(tab.label.prefix(40)))
+                .font(.system(size: 12))
+                .lineLimit(1)
+                .foregroundStyle(Palette.ink)
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 28)
+        .fixedSize()
+        .background(Palette.ground, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(Palette.hairline, lineWidth: 1))
+        .shadow(color: .black.opacity(0.18), radius: 12, y: 4)
+        .offset(x: hand.point.x - origin.x + 10, y: hand.point.y - origin.y - 14)
+        .transition(.opacity)
+    }
+}

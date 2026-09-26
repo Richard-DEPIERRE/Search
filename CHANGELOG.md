@@ -13,6 +13,7 @@ in [ROADMAP.md](ROADMAP.md).
 
 ### Added
 
+- Tabs in the column can be dragged where they go: from today's tabs to the favorites or the pins, between the two, and back to let one go; onto a split's row or either half of the page to make a pane, and a split's segment dragged away to take it out. The tab follows the hand, and a line or a tint shows where it will land.
 - A split is one row among today's tabs, a segment for each pane: click a segment to work in that pane, its cross or a middle-click closes it, and Separate Split in its menu puts the tabs back as rows of their own. A favorite or a pin in a split keeps its place too, marked ◫.
 - Split view, as in Arc: ⌃⇧= puts a new pane beside the tab you're on, up to four side by side, with dividers to drag (a double-click evens them). Click a pane to work in it; ⌃⇧] and ⌃⇧[ move between panes, ⌃⇧- takes one out, and Add to Split in a tab's menu brings any tab in, a favorite or a pin included. A split stays together: leave it for another tab and it's there when you come back, marked ◫ in the column, and it's saved with the session.
 - A link on a favorite or a pin that leads to another site opens in the peek over it, as in Arc, and the kept tab stays where it was. Links within the same site go as usual, ⌘-click still opens a tab behind, and a link meant for a new tab lands in the peek too.

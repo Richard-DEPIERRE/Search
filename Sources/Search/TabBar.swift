@@ -596,6 +596,9 @@ struct Carried: ViewModifier {
     /// The row's coordinate space, not the tab's: a tab that has just moved
     /// keeps its bearings (see the sidebar's grid).
     let space: String
+    /// In the column, the tab can be carried out of its section altogether
+    /// (see Carry). Nil in the top bar, which keeps to reordering.
+    var lift: Lifting? = nil
     let move: (Int) -> Void
 
     @State private var held = false
@@ -608,11 +611,12 @@ struct Carried: ViewModifier {
     /// The number of rows when `asked` was asked for, because a move that
     /// adds or drops a row changes what that number means.
     @State private var askedCount = 0
+    @State private var lifted = false
 
     func body(content: Content) -> some View {
         // What it has travelled, less the ground its new place has already
         // given it.
-        let shift = held ? travel - CGFloat(index - from) * step : 0
+        let shift = held && !lifted ? travel - CGFloat(index - from) * step : 0
         return content
             .offset(x: vertical ? 0 : shift, y: vertical ? shift : 0)
             // Under the hand exactly. Its place in the row springs when it
@@ -623,6 +627,7 @@ struct Carried: ViewModifier {
             .transaction { if held { $0.animation = nil } }
             .zIndex(held ? 1 : 0)
             .shadow(color: .black.opacity(held ? 0.14 : 0), radius: 12, y: 4)
+            .opacity(lifted ? 0.35 : 1)
             .gesture(
                 DragGesture(minimumDistance: 5, coordinateSpace: .named(space))
                     .onChanged { value in
@@ -633,7 +638,9 @@ struct Carried: ViewModifier {
                             askedCount = count
                         }
                         travel = vertical ? value.translation.height : value.translation.width
-                        let target = min(max(0, from + Int((travel / step).rounded())), count - 1)
+                        // Lifted out, the tab goes back where it started and
+                        // the section closes up; the chip is the tab now.
+                        let target = lifted ? from : min(max(0, from + Int((travel / step).rounded())), count - 1)
                         if target != asked || count != askedCount {
                             asked = target
                             askedCount = count
@@ -646,6 +653,21 @@ struct Carried: ViewModifier {
                             travel = 0
                             asked = nil
                         }
+                    }
+            )
+            // The same drag, seen from the window, for carrying the tab out of
+            // its section: the section's own space can't say where the hand is
+            // once it has left.
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 5, coordinateSpace: .global)
+                    .onChanged { value in
+                        guard let lift else { return }
+                        lifted = lift.carry.move(lift.tab, from: lift.source, to: value.location)
+                    }
+                    .onEnded { _ in
+                        guard let lift else { return }
+                        lift.carry.end()
+                        lifted = false
                     }
             )
     }

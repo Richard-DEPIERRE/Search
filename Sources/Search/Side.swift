@@ -36,6 +36,7 @@ struct SideBar: View {
     @State private var pinDragging: Tab.ID?
     @State private var pinFrom = 0
     @State private var pinTravel: CGSize = .zero
+    @State private var pinLifted = false
 
     private static let row: CGFloat = 28
     private static let gap: CGFloat = 2
@@ -113,6 +114,7 @@ struct SideBar: View {
         .animation(Motion.settle, value: browser.tabs.map(\.id))
         .animation(Motion.settle, value: browser.pinnedCount)
         .animation(Motion.settle, value: browser.favoriteCount)
+        .animation(Motion.quick, value: carry.lifted)
     }
 
     /// The column's edge: pull it to make the column wider or narrower,
@@ -191,6 +193,10 @@ struct SideBar: View {
                 VStack(alignment: .leading, spacing: 0) {
                     if browser.favoriteCount > 0 {
                         pinned
+                            .padding(.bottom, 10)
+                    } else if carry.lifted {
+                        DropWell(title: "Favorites", height: SideBar.square)
+                            .modifier(ReportFrame { carry.favoritesWell = $0 })
                             .padding(.bottom, 10)
                     }
                     // A row too long for the window scrolls between the cards
@@ -370,7 +376,16 @@ struct SideBar: View {
                 .transaction { if held { $0.animation = nil } }
                 .zIndex(held ? 1 : 0)
                 .shadow(color: .black.opacity(held ? 0.16 : 0), radius: 10, y: 3)
+                .opacity(held && pinLifted ? 0.35 : 1)
                 .gesture(pinReorder(tab: tab, index: index, columns: cols, width: width, height: height))
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 5, coordinateSpace: .global)
+                        .onChanged { value in pinLifted = carry.move(tab, from: .favorite, to: value.location) }
+                        .onEnded { _ in
+                            carry.end()
+                            pinLifted = false
+                        }
+                )
             }
         } }
         .coordinateSpace(name: "pins")
@@ -387,7 +402,7 @@ struct SideBar: View {
     /// the held square already got for free by changing index underneath
     /// its own drag.
     private func pinOffset(held: Bool, index: Int, columns: Int) -> CGSize {
-        guard held else { return .zero }
+        guard held, !pinLifted else { return .zero }
         let stepX = pinWidth + SideBar.pinGap
         let stepY = pinHeight + SideBar.pinGap
         let from = (row: pinFrom / columns, col: pinFrom % columns)
@@ -425,7 +440,8 @@ struct SideBar: View {
                 pinTravel = value.translation
                 let stepX = width + SideBar.pinGap
                 let stepY = height + SideBar.pinGap
-                let target = pinTarget(from: pinFrom, moved: pinDelta(columns: columns, stepX: stepX, stepY: stepY))
+                // Lifted out of the grid, the card goes back to its cell.
+                let target = pinLifted ? pinFrom : pinTarget(from: pinFrom, moved: pinDelta(columns: columns, stepX: stepX, stepY: stepY))
                 if target != index {
                     withAnimation(Motion.settle) {
                         browser.move(tab, to: target)
@@ -455,7 +471,7 @@ struct SideBar: View {
                 case .tab(let id):
                     if let tab = browser.tabs.first(where: { $0.id == id }) {
                         SideRow(browser: browser, prefs: prefs, tab: tab, live: tab.id == browser.activeID, pill: pill, close: { browser.close(tab) })
-                        .modifier(Carried(index: index, count: rows.count, step: step, vertical: true, space: "rows") {
+                        .modifier(Carried(index: index, count: rows.count, step: step, vertical: true, space: "rows", lift: Lifting(carry: carry, tab: tab, source: .today)) {
                             browser.moveTodayRow(tab, to: $0)
                         })
                     }
@@ -498,7 +514,7 @@ struct SideBar: View {
                             close: { browser.close(tab) }
                         )
                         .padding(.leading, folder == nil ? 0 : SideBar.indent)
-                        .modifier(Carried(index: index, count: rows.count, step: step, vertical: true, space: "pinRows") {
+                        .modifier(Carried(index: index, count: rows.count, step: step, vertical: true, space: "pinRows", lift: Lifting(carry: carry, tab: tab, source: .pin)) {
                             browser.movePinRow(tab, to: $0)
                         })
                     }
@@ -533,6 +549,10 @@ struct SideBar: View {
         VStack(alignment: .leading, spacing: 0) {
             if browser.pinCount > 0 {
                 pinRows
+                divider
+            } else if carry.lifted {
+                DropWell(title: "Pins", height: SideBar.row)
+                    .modifier(ReportFrame { carry.pinsWell = $0 })
                 divider
             }
             // Today's rows and the row that makes another, as one place to
@@ -1173,6 +1193,18 @@ private struct SplitSegment: View {
             }
         }
         .contentShape(Rectangle())
+        // Pulled away, the pane is carried out of its split at once: a split's
+        // row has no order of its own to make way in.
+        .gesture(
+            DragGesture(minimumDistance: 5, coordinateSpace: .global)
+                .onChanged { value in
+                    guard interactive else { return }
+                    browser.carry.move(tab, from: .pane(split: split.id, was: browser.dragSource(of: tab)), to: value.location)
+                }
+                .onEnded { _ in
+                    if interactive { browser.carry.end() }
+                }
+        )
         .onTapGesture { if interactive { browser.select(tab) } }
         .overlay { if interactive { MiddleClick { browser.close(tab) } } }
         .onHover { hovering = $0 }

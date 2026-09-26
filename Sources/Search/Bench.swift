@@ -796,6 +796,53 @@ final class Bench {
                 "page": box(a.page),
             ])
 
+        case "drag":
+            // A real drag, posted through the app's event queue as `split click`
+            // posts its click: pressed at one point of the window, moved in
+            // steps, let go at another — counted from the window's top-left, as
+            // `hit` counts. `hold` leaves the button down for a look at the
+            // chip; `release` lets it go.
+            guard Store.testing else { answer(["error": "drag only works on a --test run — it moves your tabs"]); return }
+            guard let window = Links.window else { answer(["error": "no window"]); return }
+            func post(_ type: NSEvent.EventType, _ x: Double, _ y: Double) {
+                let point = NSPoint(x: x, y: Double(window.frame.height) - y)
+                if let event = NSEvent.mouseEvent(
+                    with: type, location: point, modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: window.windowNumber, context: nil,
+                    eventNumber: 0, clickCount: 1, pressure: 1
+                ) {
+                    NSApp.postEvent(event, atStart: false)
+                }
+            }
+            if request["release"] as? Bool == true {
+                guard let x = request["x2"] as? Double, let y = request["y2"] as? Double else { answer(["error": "release needs a point"]); return }
+                post(.leftMouseUp, x, y)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { answer(self.shelves(of: browser)) }
+                return
+            }
+            guard let x1 = request["x1"] as? Double, let y1 = request["y1"] as? Double,
+                  let x2 = request["x2"] as? Double, let y2 = request["y2"] as? Double
+            else { answer(["error": "drag needs two points"]); return }
+            let steps = max(2, request["steps"] as? Int ?? 12)
+            let hold = request["hold"] as? Bool == true
+            post(.leftMouseDown, x1, y1)
+            for i in 1...steps {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.03 * Double(i)) {
+                    let f = Double(i) / Double(steps)
+                    post(.leftMouseDragged, x1 + (x2 - x1) * f, y1 + (y2 - y1) * f)
+                }
+            }
+            let end = 0.03 * Double(steps + 2)
+            if !hold { DispatchQueue.main.asyncAfter(deadline: .now() + end) { post(.leftMouseUp, x2, y2) } }
+            DispatchQueue.main.asyncAfter(deadline: .now() + end + 0.6) {
+                var out = self.shelves(of: browser)
+                out["lifted"] = browser.carry.lifted
+                out["target"] = browser.carry.target.map { "\($0)" } ?? ""
+                answer(out)
+            }
+            return
+
         case "hit":
             // What a press at a point of the window lands on, and whether
             // AppKit would carry the window off on a drag from there — the
@@ -1508,7 +1555,7 @@ final class Bench {
 
         default:
             answer(["error": "unknown command “\(verb)”", "commands": [
-                "tabs", "open", "go", "close", "wait", "sleep", "select", "keep", "drop", "home", "folder", "split", "text", "eval", "click", "type", "submit", "shot", "probe", "key", "resize", "hit", "areas", "film", "window", "pages", "picture", "place", "field", "bookmark", "menu", "keyeq", "pull", "space", "strip", "column", "fold", "consent", "site", "little", "ui",
+                "tabs", "open", "go", "close", "wait", "sleep", "select", "keep", "drop", "home", "folder", "split", "text", "eval", "click", "type", "submit", "shot", "probe", "key", "resize", "hit", "areas", "drag", "film", "window", "pages", "picture", "place", "field", "bookmark", "menu", "keyeq", "pull", "space", "strip", "column", "fold", "consent", "site", "little", "ui",
             ]])
         }
     }

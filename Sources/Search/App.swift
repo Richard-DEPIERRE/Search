@@ -474,6 +474,9 @@ struct ContentView: View {
             }
             .overlay { field }
             .overlay { panels }
+            // A tab carried out of its section: over everything, answering
+            // nothing — the drag that carries it keeps the mouse.
+            .overlay { DropLayer(browser: browser, carry: browser.carry).ignoresSafeArea() }
             // The field comes on its spring, and goes quickly: once Return
             // is pressed the page is on its way, and the field is not what
             // there is to watch.
