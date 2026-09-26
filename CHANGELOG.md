@@ -13,6 +13,7 @@ in [ROADMAP.md](ROADMAP.md).
 
 ### Added
 
+- A link on a favorite or a pin that leads to another site opens in the peek over it, as in Arc, and the kept tab stays where it was. Links within the same site go as usual, ⌘-click still opens a tab behind, and a link meant for a new tab lands in the peek too.
 - Folders among the pins, as in Arc: New Folder with This Pin from a pin's menu, a click on the folder's row to open or close it, a double-click to rename it. Drag a pin between a folder's pins, or right under an open folder, and it joins; drag it out past either end and it leaves; Move to Folder reaches a closed one. Drag a folder's row and its pins go with it. The tab you're on stays in sight under a closed folder.
 - Pins, as in Arc: rows under the favorite cards, with their titles, and a line between them and the day's tabs. Pin a tab from its menu; move it between favorites and pins the same way. A pin that has wandered off its page shows a way back at the end of its row, and a double-click renames the pin you're on.
 - Pinned tabs are favorites now, and each remembers the page it was pinned at. Wander off it and a dot shows under its square; ⌘W puts it down back at that page, and its menu has Back to Pinned Page and Set Pinned Page to This Page. A redirect on the way home still counts as home. The groundwork for pinned rows and folders, as in Arc.
