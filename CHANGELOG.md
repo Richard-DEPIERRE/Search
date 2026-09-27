@@ -24,6 +24,7 @@ in [ROADMAP.md](ROADMAP.md).
 
 ### Fixed
 
+- A sign-in page no longer reads every password kept for its site before showing the list of accounts: names come without asking, and only the password you pick is read. With passwords kept by another build of Search, macOS asked once for each of them, over and over. A "Deny" is remembered until Search quits, and the Passwords list reads a password only when you press Show.
 - A window a page opens at a size of its own, a sign-in window for one, is named in the tabs by its site rather than by its title, which the page chooses: one called "Sign in with Google" from another address no longer passes for Google's. A plain link opened in a new tab keeps its title, and a name you gave a tab stays first.
 - A link from another app, or one opened from a pinned tab, comes first after the pins instead of landing between two of them. ([#219](https://github.com/driceroland/Search/issues/219))
 - The shortcuts card lists ⇧⌘C, Copy Address, which only the Tabs menu showed. Thanks [@merttopuz](https://github.com/merttopuz) ([#182](https://github.com/driceroland/Search/pull/182)), and [@olllayor](https://github.com/olllayor) for asking ([#176](https://github.com/driceroland/Search/issues/176))

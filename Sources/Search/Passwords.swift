@@ -165,6 +165,7 @@ struct PasswordsPanel: View {
 
         @State private var hovering = false
         @State private var shown = false
+        @State private var secret: String?
         @State private var hide: DispatchWorkItem?
 
         var body: some View {
@@ -176,7 +177,9 @@ struct PasswordsPanel: View {
                     .truncationMode(.middle)
                     .frame(minWidth: 120, alignment: .leading)
 
-                Text(shown ? login.password : String(repeating: "•", count: min(12, max(6, login.password.count))))
+                // The list carries names alone; the password is read when
+                // Show is pressed, and the dots don't give away its length.
+                Text(shown ? (secret ?? "") : String(repeating: "•", count: 10))
                     .font(.system(size: shown ? 12.5 : 10, design: .monospaced))
                     .foregroundStyle(shown ? Palette.ink : Palette.muted)
                     .lineLimit(1)
@@ -202,10 +205,11 @@ struct PasswordsPanel: View {
 
         private func reveal() {
             Vault.prove("show the password for \(login.host)") { ok in
-                guard ok else { return }
+                guard ok, let read = Vault.password(for: login) else { return }
+                secret = read
                 shown = true
                 // Long enough to read or type across, and not a minute more.
-                let work = DispatchWorkItem { shown = false }
+                let work = DispatchWorkItem { shown = false; secret = nil }
                 hide?.cancel()
                 hide = work
                 DispatchQueue.main.asyncAfter(deadline: .now() + 15, execute: work)
@@ -215,6 +219,7 @@ struct PasswordsPanel: View {
         private func conceal() {
             hide?.cancel()
             shown = false
+            secret = nil
         }
     }
 

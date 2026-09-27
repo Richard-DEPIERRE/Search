@@ -321,11 +321,19 @@ final class Browser: NSObject, ObservableObject {
         guard curtain.host(of: tab.address) == list.host,
               (tab.address?.scheme?.lowercased() == "http") == list.clear
         else { return }
+        // Only now is the password itself read: the list was made from names
+        // alone, which the keychain hands over without asking.
+        guard let password = Vault.password(for: login) else {
+            announce("Couldn't read that password from the keychain")
+            return
+        }
         pickedInto = tab.id
-        tab.fill(user: login.user, password: login.password) { [weak self] worked in
+        tab.fill(user: login.user, password: password) { [weak self] worked in
             if !worked { self?.announce("Couldn't find the sign-in fields anymore") }
         }
-        Vault.touch(login)
+        var used = login
+        used.password = password
+        Vault.touch(used)
     }
 
     func dropChoice() { suggesting = nil }
@@ -353,7 +361,7 @@ final class Browser: NSObject, ObservableObject {
         }
     }
 
-    func relist() { saved = Vault.all() }
+    func relist() { saved = Vault.allAccounts() }
 
     func keep(host: String, user: String, password: String) {
         guard Vault.save(host: host, user: user, password: password) else {
@@ -377,9 +385,13 @@ final class Browser: NSObject, ObservableObject {
     func copy(_ login: Login) {
         Vault.prove("copy the password for \(login.host)") { [weak self] ok in
             guard ok, let self else { return }
+            guard let password = Vault.password(for: login) else {
+                announce("Couldn't read that password from the keychain")
+                return
+            }
             let board = NSPasteboard.general
             board.prepareForNewContents(with: .currentHostOnly)
-            board.setString(login.password, forType: .string)
+            board.setString(password, forType: .string)
             board.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"))
             board.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.TransientType"))
             let copied = board.changeCount
@@ -2091,7 +2103,7 @@ final class Browser: NSObject, ObservableObject {
             // offered only what was kept from plain http too, never an
             // account kept from the https site of the same name.
             let inTheClear = tab.address?.scheme?.lowercased() == "http"
-            let known = Array(Vault.logins(matching: host).filter { !inTheClear || $0.clear }.prefix(5))
+            let known = Array(Vault.accounts(matching: host).filter { !inTheClear || $0.clear }.prefix(5))
             suggesting = known.isEmpty ? nil : Suggesting(tab: tab.id, spot: spot, logins: known, host: host, clear: inTheClear)
         }
 
@@ -2102,9 +2114,12 @@ final class Browser: NSObject, ObservableObject {
             // A password manager extension that asked Chrome's way to do the
             // saving itself.
             if #available(macOS 15.4, *), Extensions.shared.passwordSavingTakenBy != nil { return }
-            let known = Vault.logins(for: host)
-            // Nothing to ask about one that is already known.
-            if var same = known.first(where: { $0.user == user && $0.password == password }) {
+            let known = Vault.accounts(for: host)
+            // Nothing to ask about one that is already known. Only the account
+            // with this name has its password read to compare: each one read
+            // can be a question from the keychain.
+            if var same = known.first(where: { $0.user == user }), Vault.password(for: same) == password {
+                same.password = password
                 // Where it was last used is where it is offered from now on.
                 same.clear = clear
                 Vault.touch(same)
