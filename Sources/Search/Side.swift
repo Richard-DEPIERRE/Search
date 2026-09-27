@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The tabs, down the left instead of across the top.
+/// The tabs, down either side instead of across the top.
 ///
 /// The same pieces as the strip — the grey that slides to the tab you picked,
 /// the pinned squares, the cross that appears under the pointer — laid out the
@@ -47,11 +47,18 @@ struct SideBar: View {
     /// How far a folder's pins sit in from the folder's own row.
     private static let indent: CGFloat = 14
 
+    private var onRight: Bool { prefs.sidePosition == .right }
+    private var innerEdge: Alignment { onRight ? .leading : .trailing }
+
+    /// The window's buttons' corner: gone in full screen, where macOS takes
+    /// them away, and back, forward and reload move up to the edge (idea 184).
+    private var lights: CGFloat { browser.fullScreen ? 0 : Metrics.sideLights }
+
     var body: some View {
         ZStack(alignment: .top) {
             // Not under the card for a new space: it isn't made of views that
             // would take the click first.
-            DragStrip(reserved: 0, below: browser.makingSpace ? .greatestFiniteMagnitude : rowsEnd)
+            DragStrip(reserved: 0, below: browser.makingSpace ? .greatestFiniteMagnitude : rowsEnd, onDoubleClick: browser.newTab)
 
             // The band the lights sit in is this mode's title bar: the window
             // is dragged by it and a double-click fills the screen with it,
@@ -59,7 +66,7 @@ struct SideBar: View {
             // clicks. The lights are the title bar's own and answer first.
             HStack(spacing: 0) {
                 DragStrip()
-                    .frame(width: 10 + Metrics.sideLights)
+                    .frame(width: 10 + lights)
                 Color.clear
                     .frame(width: Metrics.helm)
                     .allowsHitTesting(false)
@@ -73,7 +80,7 @@ struct SideBar: View {
                 // bar, moved beside the lights since there's no far end of a
                 // row to put them at in this mode.
                 HStack(spacing: 0) {
-                    Color.clear.frame(width: Metrics.sideLights)
+                    Color.clear.frame(width: lights)
                     Helm(browser: browser)
                     Spacer(minLength: 0)
                 }
@@ -101,10 +108,10 @@ struct SideBar: View {
         .clipped()
         .onAppear { SpaceSwipe.shared.start(for: browser) }
         .background(landing ? Palette.hover : Palette.ground)
-        .overlay(alignment: .trailing) {
+        .overlay(alignment: innerEdge) {
             Rectangle().fill(Palette.hairline).frame(width: 1)
         }
-        .overlay(alignment: .trailing) { edge }
+        .overlay(alignment: innerEdge) { edge }
         .onDrop(of: [.url, .text], isTargeted: $landing) { providers in
             browser.take(providers)
         }
@@ -134,7 +141,8 @@ struct SideBar: View {
                 DragGesture(minimumDistance: 1, coordinateSpace: .global)
                     .onChanged { value in
                         if grabbed == nil { grabbed = prefs.sideWidth }
-                        let wanted = (grabbed ?? prefs.sideWidth) + value.translation.width
+                        let delta = onRight ? -value.translation.width : value.translation.width
+                        let wanted = (grabbed ?? prefs.sideWidth) + delta
                         prefs.sideWidth = min(Metrics.sideMax, max(Metrics.sideMin, wanted))
                     }
                     .onEnded { _ in grabbed = nil }
@@ -472,7 +480,9 @@ struct SideBar: View {
                 case .tab(let id):
                     if let tab = browser.tabs.first(where: { $0.id == id }) {
                         SideRow(browser: browser, prefs: prefs, tab: tab, live: tab.id == browser.activeID, pill: pill, close: { browser.close(tab) })
-                        .modifier(Carried(index: index, count: rows.count, step: step, vertical: true, space: "rows", lift: Lifting(carry: carry, tab: tab, source: .today)) {
+                        .modifier(Carried(index: index, count: rows.count, step: step, vertical: true, space: "rows",
+                                          lift: Lifting(carry: carry, tab: tab, source: .today),
+                                          outside: { browser.dragOut(tab) }) {
                             browser.moveTodayRow(tab, to: $0)
                         })
                     }
@@ -579,10 +589,9 @@ struct SideBar: View {
         HStack(spacing: 2) {
             if browser.prefs.usesSpaces { SpaceDot(browser: browser) }
             ExtensionSlot(edge: .trailing)
-            Door(icon: "bookmark", help: "Bookmarks") { browser.bookmarksOpen.toggle() }
-                .popover(isPresented: $browser.bookmarksOpen, arrowEdge: .trailing) {
-                    BookmarksDropdown(browser: browser, bookmarks: browser.bookmarks)
-                }
+            BookmarkDoor(browser: browser, arrowEdge: .trailing)
+            // Only while a download is running, and a moment after.
+            FetchDoor(browser: browser, fetches: browser.fetches)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 10)
@@ -646,6 +655,9 @@ private struct PinSquare: View {
         Group {
             if browser.editingPin == tab.id {
                 PinField(browser: browser, tab: tab)
+            } else if tab.loading {
+                // Its page on the way, as a row's ring says.
+                Ring(size: scale * 11 / 34)
             } else if prefs.glyph == .icons, let icon = tab.icon {
                 Mark(icon: icon, letter: tab.pin ?? "", size: scale * 16 / 34, dim: tab.asleep)
             } else {
@@ -658,8 +670,11 @@ private struct PinSquare: View {
         .frame(width: width, height: height)
         .background {
             if live {
+                // Darker than the resting squares' grey by as much as a live
+                // row is darker than the white it sits on (Drice: the live
+                // pin barely showed among the others).
                 RoundedRectangle(cornerRadius: scale * 9 / 34, style: .continuous)
-                    .fill(Palette.wash)
+                    .fill(Palette.pinLive)
                     .matchedGeometryEffect(id: "live", in: pill)
             } else {
                 RoundedRectangle(cornerRadius: scale * 9 / 34, style: .continuous)
@@ -868,10 +883,7 @@ private struct SideRow: View {
                 Rectangle().fill(Palette.wash)
                 if prefs.showsReading {
                     GeometryReader { geo in
-                        Rectangle()
-                            .fill(Palette.ink.opacity(0.055))
-                            .frame(width: geo.size.width * tab.reading)
-                            .animation(.easeOut(duration: 0.15), value: tab.reading)
+                        ReadingFill(meter: tab.meter, width: geo.size.width)
                     }
                 }
             }

@@ -20,6 +20,6 @@ let package = Package(
             dependencies: ["Search"],
             path: "Tests/SearchTests",
             swiftSettings: [.swiftLanguageMode(.v5)]
-        ),
+        )
     ]
 )
