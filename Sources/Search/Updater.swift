@@ -240,6 +240,11 @@ final class Updater: ObservableObject {
     }
 
     private static func fetch() async -> Release? {
+        // This fork is built here and installed with install.sh. The real
+        // feed names upstream's builds, which would swap the fork's
+        // features out, so only a test run pointed at a feed of its own
+        // ever looks.
+        guard overridden else { return nil }
         var request = URLRequest(url: feed)
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.timeoutInterval = 12
