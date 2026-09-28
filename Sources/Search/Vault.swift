@@ -25,6 +25,23 @@ struct Login: Identifiable, Equatable, Hashable {
     var id: String { host + "\u{1}" + user }
 }
 
+/// One item as a list needs it: the site, the account, and when it was last
+/// used, without the secret. Reading a secret is one keychain call, and the
+/// list asks for one only when a password is shown or copied: a drawer of four
+/// hundred kept passwords would otherwise be four hundred calls before the
+/// panel could draw itself. Nothing that writes a password or fills one into a
+/// page takes this type, so a row cannot be handed on as though it held one.
+struct Kept: Identifiable, Equatable, Hashable {
+    var host: String
+    var user: String
+    /// When it was last used to sign in, if known. Newest first in lists.
+    var used: Date?
+    /// Kept from a page sent in the clear, over plain http. See `Login`.
+    var clear = false
+
+    var id: String { host + "\u{1}" + user }
+}
+
 enum Vault {
     /// What every item of ours is tagged with. A test run tags its own, so a
     /// password saved while trying something never sits among the real ones.
@@ -37,62 +54,41 @@ enum Vault {
     /// errSecParam, and it did so quietly enough that for a while this app
     /// saved passwords it could never read back. So: the list first, without
     /// secrets, then each secret on its own.
-    ///
-    /// And only the one that is needed. Listing asks nothing of the person;
-    /// each secret can: an item another build of this app kept — the one
-    /// signed by Office Commun, beside a build of your own — makes macOS ask
-    /// for it, item by item. Reading every account's password to show a list
-    /// of names asked once for each of forty-seven on one site, and a sign-in
-    /// page could not be used for the dialogs. So the lists below carry names
-    /// alone, with an empty password, and `password(for:)` reads the one you
-    /// pick.
 
-    /// What is kept for a host, exactly. See `accounts(matching:)` for the
-    /// version that also looks across a site's subdomains.
-    static func accounts(for host: String) -> [Login] {
-        rows(where: [kSecAttrServer as String: host]).compactMap(account(from:))
+    /// What is kept for a host, exactly, without secrets. See
+    /// `kept(matching:)` for the version that also looks across a site's
+    /// subdomains.
+    ///
+    /// Without secrets because each one read can be a question: an item
+    /// another build of this app kept — the one signed by Office Commun,
+    /// beside a build of your own — makes macOS ask for it, item by item.
+    /// Reading every account's password to offer a list of names asked once
+    /// for each of forty-seven on one site, and the sign-in page couldn't be
+    /// used for the dialogs. The one picked is read with `secret(of:)`.
+    static func kept(for host: String) -> [Kept] {
+        rows(where: [kSecAttrServer as String: host]).compactMap(kept(from:))
     }
 
     /// The keychain matches a server name exactly, and a sign-in rarely lives
     /// on the page you saved it from — accounts.example.com asks, and the
     /// password was kept for example.com. So the site is matched as a site:
     /// the host first, then anything sharing its registrable domain.
-    static func accounts(matching host: String) -> [Login] {
+    static func kept(matching host: String) -> [Kept] {
         let domain = registrable(host)
-        let exact = accounts(for: host)
+        let exact = kept(for: host)
         let wider = rows(where: [:])
             .filter { ($0[kSecAttrServer as String] as? String).map { $0 != host && registrable($0) == domain } ?? false }
-            .compactMap(account(from:))
+            .compactMap(kept(from:))
         return (exact + wider).sorted { ($0.used ?? .distantPast) > ($1.used ?? .distantPast) }
     }
 
-    /// Everything this app holds, for the list. Read on demand and never kept
-    /// in a property.
-    static func allAccounts() -> [Login] {
-        rows(where: [:]).compactMap(account(from:))
+    /// Everything this app holds, as the list needs it: no secrets. Each one
+    /// is `secret(of:)`, a call of its own, and only when it is asked for.
+    /// Read on demand and never kept in a property.
+    static func all() -> [Kept] {
+        rows(where: [:]).compactMap(kept(from:))
             .sorted { $0.host == $1.host ? $0.user < $1.user : $0.host < $1.host }
     }
-
-    /// The password of one account from those lists, read now. Nil when there
-    /// is none, or when the person said no to the keychain's question — which
-    /// is then remembered until Search quits, so a no is not asked again on
-    /// every sign-in box.
-    static func password(for login: Login) -> String? {
-        let key = login.host + "\u{1}" + login.user
-        guard !refused.contains(key) else { return nil }
-        let (secret, status) = secret(host: login.host, user: login.user)
-        if isRefusal(status) { refused.insert(key) }
-        return secret
-    }
-
-    /// The keychain's answers that mean the person said no — Deny, or a
-    /// dialog closed — rather than that nothing is there.
-    static func isRefusal(_ status: OSStatus) -> Bool {
-        status == errSecAuthFailed || status == errSecUserCanceled
-    }
-
-    /// Accounts whose password the person refused to hand over this time.
-    private static var refused = Set<String>()
 
     /// The items' attributes — no secrets — narrowed by whatever is given.
     private static func rows(where extra: [String: Any]) -> [[String: Any]] {
@@ -114,9 +110,12 @@ enum Vault {
         return rows
     }
 
-    /// One item's secret, by the two things that name it, and what the
-    /// keychain answered.
-    private static func secret(host: String, user: String) -> (String?, OSStatus) {
+    /// One item's secret, by the two things that name it. Nil too when the
+    /// person said no to the keychain's question — which is then remembered
+    /// until Search quits, so a no is not asked again on every sign-in box.
+    private static func secret(host: String, user: String) -> String? {
+        let key = host + "\u{1}" + user
+        guard !refused.contains(key) else { return nil }
         var out: CFTypeRef?
         let status = SecItemCopyMatching([
             kSecClass as String: kSecClassInternetPassword,
@@ -127,22 +126,43 @@ enum Vault {
             kSecMatchLimit as String: kSecMatchLimitOne,
         ] as CFDictionary, &out)
         guard status == errSecSuccess, let data = out as? Data else {
+            if isRefusal(status) { refused.insert(key) }
             if status != errSecItemNotFound { NSLog("Vault: keychain read failed (%d)", status) }
-            return (nil, status)
+            return nil
         }
-        return (String(data: data, encoding: .utf8), status)
+        return String(data: data, encoding: .utf8)
     }
 
-    /// An account from its attributes alone: no secret, so no question.
-    private static func account(from row: [String: Any]) -> Login? {
-        guard let host = row[kSecAttrServer as String] as? String,
-              let user = row[kSecAttrAccount as String] as? String
-        else { return nil }
+    /// The keychain's answers that mean the person said no — Deny, or a
+    /// dialog closed — rather than that nothing is there.
+    static func isRefusal(_ status: OSStatus) -> Bool {
+        status == errSecAuthFailed || status == errSecUserCanceled
+    }
+
+    /// Items whose secret the person refused to hand over this time.
+    private static var refused = Set<String>()
+
+    /// One item's secret, where a list holds only the item: read when a
+    /// password is shown or copied, and never as part of a list.
+    static func secret(of kept: Kept) -> String? { secret(host: kept.host, user: kept.user) }
+
+    /// What an item's attributes say beyond its name: when it was last used,
+    /// and whether it was kept from a page sent in the clear.
+    private static func noted(_ row: [String: Any]) -> (used: Date?, clear: Bool) {
         // The keychain has no "last used" of its own; it rides in the comment.
         let used = (row[kSecAttrComment as String] as? String)
             .flatMap(Double.init).map(Date.init(timeIntervalSince1970:))
         let clear = (row[kSecAttrProtocol as String] as? String) == (kSecAttrProtocolHTTP as String)
-        return Login(host: host, user: user, password: "", used: used, clear: clear)
+        return (used, clear)
+    }
+
+    /// One item without its secret, for the list.
+    private static func kept(from row: [String: Any]) -> Kept? {
+        guard let host = row[kSecAttrServer as String] as? String,
+              let user = row[kSecAttrAccount as String] as? String
+        else { return nil }
+        let (used, clear) = noted(row)
+        return Kept(host: host, user: user, used: used, clear: clear)
     }
 
     // MARK: - writing
@@ -237,7 +257,13 @@ enum Vault {
     static func host(of text: String) -> String {
         var value = text.trimmingCharacters(in: .whitespaces)
         if !value.contains("://") { value = "https://" + value }
-        guard let host = URL(string: value)?.host()?.lowercased() else { return "" }
+        // A website's, and nothing else: an Android app's login in an export
+        // (android://…@com.vendor.app/) names a package, which can read as a
+        // domain somebody else owns — com.vendor.app, .shopping… — and would
+        // be offered to them.
+        guard let url = URL(string: value), ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+              let host = url.host()?.lowercased()
+        else { return "" }
         return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
     }
 

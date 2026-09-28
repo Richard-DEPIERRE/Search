@@ -25,13 +25,14 @@ final class LittleWindow: NSObject, NSWindowDelegate {
     /// `front: false` makes it without showing it — for the bench, which
     /// must never put a window on screen.
     static func show(_ url: URL, for browser: Browser, front: Bool = true) {
-        let tab = Tab()
+        let tab = Tab(configuration: Web.configuration(space: browser.spaceID))
         browser.prepare(tab)
         tab.go(to: url)
         let little = LittleWindow(tab: tab, browser: browser)
         open.append(little)
         little.window.center()
-        guard front else { return }
+        // Never a test run's in front: a probe started hidden stays off every screen.
+        guard front, !Store.testing else { return }
         little.window.makeKeyAndOrderFront(nil)
         if #available(macOS 14, *) { NSApp.activate() } else { NSApp.activate(ignoringOtherApps: true) }
     }
@@ -84,12 +85,14 @@ final class LittleWindow: NSObject, NSWindowDelegate {
     /// Into the browser's row, after the tab on screen (never among the
     /// pins), and in front; the small window goes.
     func keep() {
-        guard let browser else { return }
+        // Into the window in front, whichever that is now.
+        guard let browser = Browsers.front ?? browser else { return }
         kept = true
-        browser.insert(tab, at: browser.placeForNew())
-        browser.select(tab)
+        // As a tab moved from another window is: this window's delegate,
+        // and this window's space, with its sign-ins.
+        browser.receive(tab)
         window.close()
-        (Links.window ?? NSApp.windows.first { $0.contentView != nil && !($0 is NSPanel) && $0 !== window })?
+        (browser.window ?? NSApp.windows.first { $0.contentView != nil && !($0 is NSPanel) && $0 !== window })?
             .makeKeyAndOrderFront(nil)
     }
 
@@ -99,10 +102,11 @@ final class LittleWindow: NSObject, NSWindowDelegate {
     }
 }
 
-/// The page, and the line over it.
-private struct LittleView: View {
+/// The page, and the line over it: the site, and Open in Search when there
+/// is somewhere to keep it (an extension's popup window has no such button).
+struct LittleView: View {
     @ObservedObject var tab: Tab
-    let keep: () -> Void
+    let keep: (() -> Void)?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -115,8 +119,12 @@ private struct LittleView: View {
                     .foregroundStyle(Palette.muted)
                     .lineLimit(1)
                 Spacer(minLength: 0)
-                Pill("Open in Search", action: keep)
-                    .help("Open in Search   ⌘O")
+                if let keep {
+                    Pill("Open in Search", action: keep)
+                        .help("Open in Search   ⌘O")
+                } else {
+                    Spacer().frame(width: 64)
+                }
             }
             .padding(.horizontal, 10)
             .frame(height: 34)
@@ -129,5 +137,20 @@ private struct LittleView: View {
     private var site: String {
         guard let url = tab.address else { return "" }
         return SiteCard.site(url)
+    }
+}
+
+/// An extension's popup window (windows.create with type "popup"): the
+/// browser's tab on screen as the small window shows a page, the site over
+/// it. Its tabs, checks and passwords are the browser's, as in any window.
+struct ExtensionPopupView: View {
+    @ObservedObject var browser: Browser
+
+    var body: some View {
+        if let tab = browser.active {
+            LittleView(tab: tab, keep: nil).id(tab.id)
+        } else {
+            Palette.ground
+        }
     }
 }

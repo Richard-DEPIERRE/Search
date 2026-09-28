@@ -9,8 +9,52 @@ import WebKit
 // file picker that never opens. Each one here is the system's own sheet on the
 // window the page is in, which is what every other browser on this Mac shows.
 
+/// A question held for a tab in the background. WebKit wants every one of
+/// them answered; one let go without being shown answers as dismissed.
+@MainActor
+final class HeldQuestion {
+    private let show: () -> Void
+    private var drop: (() -> Void)?
+
+    init(show: @escaping () -> Void, drop: @escaping () -> Void) {
+        self.show = show
+        self.drop = drop
+    }
+
+    func present() {
+        drop = nil
+        show()
+    }
+
+    func dismiss() {
+        let drop = drop
+        self.drop = nil
+        drop?()
+    }
+
+    deinit { drop?() }
+}
+
 extension Browser {
     // MARK: - alert, confirm, prompt
+
+    /// A page's question goes over its own page only. One from a tab in the
+    /// background — or in another space — waits until you go to that tab, as
+    /// in Safari and Chrome: over the tab in front, a prompt() asking for a
+    /// password would pass for that page's. A tab closed first gets the
+    /// answer a dismissed dialog gives.
+    func ask(from webView: WKWebView, show: @escaping () -> Void, drop: @escaping () -> Void) {
+        let known = tabs + parkedTabs
+        // Questions from tabs that have gone some other way than close(_:).
+        for id in heldDialogs.keys where !known.contains(where: { $0.id == id }) {
+            heldDialogs.removeValue(forKey: id)?.forEach { $0.dismiss() }
+        }
+        guard let tab = known.first(where: { $0.built === webView }), tab.id != activeID else {
+            show()
+            return
+        }
+        heldDialogs[tab.id, default: []].append(HeldQuestion(show: show, drop: drop))
+    }
 
     func webView(
         _ webView: WKWebView,
@@ -18,9 +62,11 @@ extension Browser {
         initiatedByFrame frame: WKFrameInfo,
         completionHandler: @escaping () -> Void
     ) {
-        let alert = Dialogs.alert(from: frame, saying: message)
-        alert.addButton(withTitle: "OK")
-        Dialogs.show(alert, over: webView) { _ in completionHandler() }
+        ask(from: webView, show: {
+            let alert = Dialogs.alert(from: frame, saying: message)
+            alert.addButton(withTitle: "OK")
+            Dialogs.show(alert, over: webView) { _ in completionHandler() }
+        }, drop: completionHandler)
     }
 
     func webView(
@@ -29,12 +75,14 @@ extension Browser {
         initiatedByFrame frame: WKFrameInfo,
         completionHandler: @escaping (Bool) -> Void
     ) {
-        let alert = Dialogs.alert(from: frame, saying: message)
-        alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: "Cancel")
-        Dialogs.show(alert, over: webView) { answer in
-            completionHandler(answer == .alertFirstButtonReturn)
-        }
+        ask(from: webView, show: {
+            let alert = Dialogs.alert(from: frame, saying: message)
+            alert.addButton(withTitle: "OK")
+            alert.addButton(withTitle: "Cancel")
+            Dialogs.show(alert, over: webView) { answer in
+                completionHandler(answer == .alertFirstButtonReturn)
+            }
+        }, drop: { completionHandler(false) })
     }
 
     func webView(
@@ -44,16 +92,18 @@ extension Browser {
         initiatedByFrame frame: WKFrameInfo,
         completionHandler: @escaping (String?) -> Void
     ) {
-        let alert = Dialogs.alert(from: frame, saying: prompt)
-        alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: "Cancel")
-        let field = NSTextField(string: defaultText ?? "")
-        field.frame = NSRect(x: 0, y: 0, width: 260, height: 24)
-        alert.accessoryView = field
-        alert.window.initialFirstResponder = field
-        Dialogs.show(alert, over: webView) { answer in
-            completionHandler(answer == .alertFirstButtonReturn ? field.stringValue : nil)
-        }
+        ask(from: webView, show: {
+            let alert = Dialogs.alert(from: frame, saying: prompt)
+            alert.addButton(withTitle: "OK")
+            alert.addButton(withTitle: "Cancel")
+            let field = NSTextField(string: defaultText ?? "")
+            field.frame = NSRect(x: 0, y: 0, width: 260, height: 24)
+            alert.accessoryView = field
+            alert.window.initialFirstResponder = field
+            Dialogs.show(alert, over: webView) { answer in
+                completionHandler(answer == .alertFirstButtonReturn ? field.stringValue : nil)
+            }
+        }, drop: { completionHandler(nil) })
     }
 
     // MARK: - choosing a file
@@ -132,20 +182,23 @@ extension Browser {
             completionHandler(.performDefaultHandling, nil)
             return
         }
-        let alert = NSAlert()
-        alert.messageText = "\(host) can't prove who it is"
-        alert.informativeText = "Its certificate isn't trusted by this Mac. Someone could be reading what you send. Continue only if you know why it looks like this."
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Go Back")
-        alert.addButton(withTitle: "Continue Anyway")
-        Dialogs.show(alert, over: webView) { answer in
-            guard answer == .alertSecondButtonReturn else {
-                completionHandler(.cancelAuthenticationChallenge, nil)
-                return
+        // Over its own tab only, as a page's own questions are (see ask).
+        ask(from: webView, show: {
+            let alert = NSAlert()
+            alert.messageText = "\(host) can't prove who it is"
+            alert.informativeText = "Its certificate isn't trusted by this Mac. Someone could be reading what you send. Continue only if you know why it looks like this."
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Go Back")
+            alert.addButton(withTitle: "Continue Anyway")
+            Dialogs.show(alert, over: webView) { answer in
+                guard answer == .alertSecondButtonReturn else {
+                    completionHandler(.cancelAuthenticationChallenge, nil)
+                    return
+                }
+                Dialogs.excused.insert(host)
+                completionHandler(.useCredential, URLCredential(trust: trust))
             }
-            Dialogs.excused.insert(host)
-            completionHandler(.useCredential, URLCredential(trust: trust))
-        }
+        }, drop: { completionHandler(.cancelAuthenticationChallenge, nil) })
     }
 
     /// A site behind a name and a password — a staging server, a router. One
@@ -159,6 +212,19 @@ extension Browser {
             completionHandler(.cancelAuthenticationChallenge, nil)
             return
         }
+        // A tab behind yours asking for a name and a password would put the
+        // question over the page you are looking at, where it would pass for
+        // that page's. It waits for its own tab, as a page's questions do.
+        ask(from: webView, show: { [weak self] in
+            self?.askSignIn(webView, challenge, completionHandler)
+        }, drop: { completionHandler(.cancelAuthenticationChallenge, nil) })
+    }
+
+    private func askSignIn(
+        _ webView: WKWebView,
+        _ challenge: URLAuthenticationChallenge,
+        _ completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
         let space = challenge.protectionSpace
         let alert = NSAlert()
         alert.messageText = "\(space.host) asks you to sign in"
@@ -231,11 +297,23 @@ enum Dialogs {
         webView.window ?? NSApp.mainWindow ?? NSApp.windows.first { $0.contentView != nil && $0.isVisible }
     }
 
+    /// A test run's questions, in the order they would have been shown.
+    static var askedInTest: [String] = []
+
     static func show(
         _ alert: NSAlert,
         over webView: WKWebView,
         then finish: @escaping (NSApplication.ModalResponse) -> Void
     ) {
+        // A test run never shows one — a sheet, or a window of its own for a
+        // page without one, would be on the screen of whoever is working
+        // beside it. What it would have asked is written down (bench probe),
+        // and it is answered as if cancelled.
+        if Store.testing {
+            askedInTest.append(alert.messageText)
+            finish(.cancel)
+            return
+        }
         if let window = window(for: webView) {
             alert.beginSheetModal(for: window, completionHandler: finish)
         } else {

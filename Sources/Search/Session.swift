@@ -13,11 +13,15 @@ enum Session {
         var name: String?
         /// For a kept tab: "favorites" or "pins". Absent in a session from
         /// before there were two.
-        var shelf: String?
-        /// For a kept tab: the page it goes back to.
-        var home: String?
+        var shelf: String? = nil
+        /// For a kept tab: the page it goes back to (see Browser.goHome).
+        var home: String? = nil
         /// For a pin in a folder: the folder's id.
-        var folder: String?
+        var folder: String? = nil
+        /// The group this ordinary tab belongs to, if any.
+        var groupID: UUID? = nil
+        /// A pin's identity, the same in every window (see Pins.swift).
+        var pinID: UUID? = nil
 
         /// A kept tab from before there were shelves was a card at the top:
         /// a favorite now, looking exactly as it did. Anything else this
@@ -42,11 +46,28 @@ enum Session {
     struct Shape: Codable {
         var tabs: [Entry]
         var active: Int
+        /// Nil in sessions written before tab groups existed. Written whether
+        /// or not groups are turned on, so turning them off loses nothing.
+        var groups: [TabGroup]? = nil
         /// This space's folders of pins. Absent from sessions without any.
-        var folders: [Folder]?
+        var folders: [Folder]? = nil
         /// This space's splits, as places in `tabs` (see Splits.swift). Absent
         /// from sessions without any.
-        var splits: [SavedSplit]?
+        var splits: [SavedSplit]? = nil
+        /// Upstream's Split View pairs (see TabSplit), dormant in this fork.
+        /// Indices in `tabs`, so restored tabs can have new live identities.
+        /// Written whether or not Split View is on, as groups are. Under a key
+        /// of their own: `splits` is the fork's.
+        var pairs: [Pair] = []
+    }
+
+    /// A split (see TabSplit), its pages by their place in `tabs`.
+    struct Pair: Codable {
+        var tabs: [Int]
+        var axis: TabSplit.Axis = .horizontal
+        var sizes: [Double]
+        /// The page last focused, by its place in `tabs`.
+        var focused: Int?
     }
 
     /// The first space's is the session there always was; each other space
@@ -77,32 +98,80 @@ enum Session {
     /// background queue, and a session handed to one on the way out is a
     /// session that may never reach the disk.
     static func write(now: Bool = false, space: UUID = Space.firstID, _ shape: Shape) {
-        let file = file(space)
-        let put = {
-            guard let data = try? JSONEncoder().encode(shape) else { return }
-            try? FileManager.default.createDirectory(
-                at: file.deletingLastPathComponent(), withIntermediateDirectories: true
-            )
-            try? data.write(to: file, options: .atomic)
-        }
-        if now {
-            put()
-        } else {
-            DispatchQueue.global(qos: .utility).async(execute: put)
-        }
+        // One after another, the newest last (see Disk).
+        Disk.write(file(space), now: now) { try? JSONEncoder().encode(shape) }
+    }
+}
+
+// The groups are the one part of the file an older or newer version may not
+// agree on, so they are read leniently: a value that doesn't make sense is
+// taken for no groups at all, never for a file that won't decode. That would
+// put the whole session in quarantine and bring back not a single tab. An
+// older version reading this file skips both keys, as JSONDecoder skips any
+// key it isn't asked for. In extensions, so the memberwise initialisers stay.
+
+extension Session.Entry {
+    private enum Keys: String, CodingKey { case url, title, pin, name, shelf, home, folder, groupID, pinID }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        url = try c.decode(String.self, forKey: .url)
+        title = try c.decode(String.self, forKey: .title)
+        pin = try c.decodeIfPresent(String.self, forKey: .pin)
+        name = try c.decodeIfPresent(String.self, forKey: .name)
+        shelf = try? c.decodeIfPresent(String.self, forKey: .shelf)
+        home = try c.decodeIfPresent(String.self, forKey: .home)
+        folder = try? c.decodeIfPresent(String.self, forKey: .folder)
+        groupID = try? c.decodeIfPresent(UUID.self, forKey: .groupID)
+        pinID = try? c.decodeIfPresent(UUID.self, forKey: .pinID)
     }
 }
 
 extension Session.Shape {
-    /// Read leniently where a hand, or a write cut short, could have left
-    /// something odd: a folder that won't read is dropped, not the session
-    /// with every tab in it. Written the ordinary way.
+    private enum Keys: String, CodingKey { case tabs, active, groups, folders, splits, pairs }
+
     init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        tabs = try container.decode([Session.Entry].self, forKey: .tabs)
-        active = try container.decode(Int.self, forKey: .active)
-        folders = (try? container.decodeIfPresent([Lossy<Folder>].self, forKey: .folders))?.compactMap(\.value)
-        splits = (try? container.decodeIfPresent([Lossy<SavedSplit>].self, forKey: .splits))?.compactMap(\.value)
+        let c = try decoder.container(keyedBy: Keys.self)
+        tabs = try c.decode([Session.Entry].self, forKey: .tabs)
+        active = try c.decode(Int.self, forKey: .active)
+        groups = try? c.decodeIfPresent([TabGroup].self, forKey: .groups)
+        // Read leniently where a hand, or a write cut short, could have left
+        // something odd: a folder that won't read is dropped, not the session
+        // with every tab in it.
+        folders = (try? c.decodeIfPresent([Lossy<Folder>].self, forKey: .folders))?.compactMap(\.value)
+        splits = (try? c.decodeIfPresent([Lossy<SavedSplit>].self, forKey: .splits))?.compactMap(\.value)
+        pairs = (try? c.decodeIfPresent([Session.Pair].self, forKey: .pairs)) ?? []
+    }
+}
+
+extension Session.Pair {
+    private enum Keys: String, CodingKey { case tabs, axis, sizes, focused, left, right, fraction }
+
+    /// Leniently: an axis this version doesn't know is drawn side by side,
+    /// and the first shape Split View was written in on main — a left, a
+    /// right and a fraction — still reads.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        if let tabs = try? c.decode([Int].self, forKey: .tabs) {
+            self.tabs = tabs
+            sizes = (try? c.decode([Double].self, forKey: .sizes)) ?? TabSplit.even(tabs.count)
+        } else {
+            let left = try c.decode(Int.self, forKey: .left)
+            let right = try c.decode(Int.self, forKey: .right)
+            let fraction = (try? c.decode(Double.self, forKey: .fraction)) ?? 0.5
+            tabs = [left, right]
+            sizes = [fraction, 1 - fraction]
+        }
+        axis = (try? c.decodeIfPresent(TabSplit.Axis.self, forKey: .axis)) ?? .horizontal
+        focused = try? c.decodeIfPresent(Int.self, forKey: .focused)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: Keys.self)
+        try c.encode(tabs, forKey: .tabs)
+        try c.encode(axis, forKey: .axis)
+        try c.encode(sizes, forKey: .sizes)
+        try c.encodeIfPresent(focused, forKey: .focused)
     }
 }
 
