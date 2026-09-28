@@ -55,22 +55,30 @@ enum Vault {
     /// saved passwords it could never read back. So: the list first, without
     /// secrets, then each secret on its own.
 
-    /// What is kept for a host, exactly. See `logins(matching:)` for the
-    /// version that also looks across a site's subdomains.
-    static func logins(for host: String) -> [Login] {
-        rows(where: [kSecAttrServer as String: host]).compactMap(login(from:))
+    /// What is kept for a host, exactly, without secrets. See
+    /// `kept(matching:)` for the version that also looks across a site's
+    /// subdomains.
+    ///
+    /// Without secrets because each one read can be a question: an item
+    /// another build of this app kept — the one signed by Office Commun,
+    /// beside a build of your own — makes macOS ask for it, item by item.
+    /// Reading every account's password to offer a list of names asked once
+    /// for each of forty-seven on one site, and the sign-in page couldn't be
+    /// used for the dialogs. The one picked is read with `secret(of:)`.
+    static func kept(for host: String) -> [Kept] {
+        rows(where: [kSecAttrServer as String: host]).compactMap(kept(from:))
     }
 
     /// The keychain matches a server name exactly, and a sign-in rarely lives
     /// on the page you saved it from — accounts.example.com asks, and the
     /// password was kept for example.com. So the site is matched as a site:
     /// the host first, then anything sharing its registrable domain.
-    static func logins(matching host: String) -> [Login] {
+    static func kept(matching host: String) -> [Kept] {
         let domain = registrable(host)
-        let exact = logins(for: host)
+        let exact = kept(for: host)
         let wider = rows(where: [:])
             .filter { ($0[kSecAttrServer as String] as? String).map { $0 != host && registrable($0) == domain } ?? false }
-            .compactMap(login(from:))
+            .compactMap(kept(from:))
         return (exact + wider).sorted { ($0.used ?? .distantPast) > ($1.used ?? .distantPast) }
     }
 
@@ -102,8 +110,12 @@ enum Vault {
         return rows
     }
 
-    /// One item's secret, by the two things that name it.
+    /// One item's secret, by the two things that name it. Nil too when the
+    /// person said no to the keychain's question — which is then remembered
+    /// until Search quits, so a no is not asked again on every sign-in box.
     private static func secret(host: String, user: String) -> String? {
+        let key = host + "\u{1}" + user
+        guard !refused.contains(key) else { return nil }
         var out: CFTypeRef?
         let status = SecItemCopyMatching([
             kSecClass as String: kSecClassInternetPassword,
@@ -114,11 +126,21 @@ enum Vault {
             kSecMatchLimit as String: kSecMatchLimitOne,
         ] as CFDictionary, &out)
         guard status == errSecSuccess, let data = out as? Data else {
+            if isRefusal(status) { refused.insert(key) }
             if status != errSecItemNotFound { NSLog("Vault: keychain read failed (%d)", status) }
             return nil
         }
         return String(data: data, encoding: .utf8)
     }
+
+    /// The keychain's answers that mean the person said no — Deny, or a
+    /// dialog closed — rather than that nothing is there.
+    static func isRefusal(_ status: OSStatus) -> Bool {
+        status == errSecAuthFailed || status == errSecUserCanceled
+    }
+
+    /// Items whose secret the person refused to hand over this time.
+    private static var refused = Set<String>()
 
     /// One item's secret, where a list holds only the item: read when a
     /// password is shown or copied, and never as part of a list.
@@ -132,17 +154,6 @@ enum Vault {
             .flatMap(Double.init).map(Date.init(timeIntervalSince1970:))
         let clear = (row[kSecAttrProtocol as String] as? String) == (kSecAttrProtocolHTTP as String)
         return (used, clear)
-    }
-
-    /// One item with its secret, for the paths that hand a password over:
-    /// filling a sign-in in, and telling whether one is already kept.
-    private static func login(from row: [String: Any]) -> Login? {
-        guard let host = row[kSecAttrServer as String] as? String,
-              let user = row[kSecAttrAccount as String] as? String,
-              let password = secret(host: host, user: user)
-        else { return nil }
-        let (used, clear) = noted(row)
-        return Login(host: host, user: user, password: password, used: used, clear: clear)
     }
 
     /// One item without its secret, for the list.
