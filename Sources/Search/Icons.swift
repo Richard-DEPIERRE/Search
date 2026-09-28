@@ -1,3 +1,4 @@
+import ImageIO
 import SwiftUI
 import WebKit
 
@@ -24,6 +25,15 @@ final class Favicons {
     private var absent: Set<String> = []
 
     private static var folder: URL { Store.folder.appendingPathComponent("icons", isDirectory: true) }
+
+    /// Clear History: every icon kept on disk goes. The tabs open now keep
+    /// theirs until they are closed.
+    func forgetAll() {
+        try? FileManager.default.removeItem(at: Favicons.folder)
+        missing.removeAll()
+        absent.removeAll()
+        if #available(macOS 15.4, *) { ExtensionShims.forgetIcons() }
+    }
     private static func file(_ key: String) -> URL { folder.appendingPathComponent(key + ".png") }
 
     /// Whether the chrome is dark right now. A site that declares an icon
@@ -40,8 +50,21 @@ final class Favicons {
     /// What is already known, and nothing fetched. In the dark, the dark
     /// variant when there is one, the ordinary icon otherwise.
     func cached(_ host: String) -> NSImage? {
-        if Favicons.dark, let hit = known(Favicons.key(host, dark: true)) { return hit }
-        return known(host)
+        let normalized = host.lowercased()
+        if let hit = match(normalized) { return hit }
+        if normalized.hasPrefix("www.") {
+            let bare = String(normalized.dropFirst(4))
+            if let hit = match(bare) { return hit }
+        } else {
+            let www = "www." + normalized
+            if let hit = match(www) { return hit }
+        }
+        return nil
+    }
+
+    private func match(_ key: String) -> NSImage? {
+        if Favicons.dark, let hit = known(Favicons.key(key, dark: true)) { return hit }
+        return known(key)
     }
 
     private func known(_ key: String) -> NSImage? {
@@ -97,7 +120,7 @@ final class Favicons {
         // light icon is not enough on its own — the site may offer a dark
         // one that has never been asked for — so the page is asked.
         if Favicons.fresh(Favicons.key(host, dark: dark)), let known = known(Favicons.key(host, dark: dark)) {
-            tab.icon = known
+            if tab.address?.host()?.lowercased() == host { tab.icon = known }
             return
         }
         guard !busy.contains(host), !missing.contains(host) else { return }
@@ -113,7 +136,9 @@ final class Favicons {
                 // No dark variant here after all, and the ordinary one is
                 // fresh: it is the one to wear.
                 if !wantDark, Favicons.fresh(key), let known = self.known(key) {
-                    tab?.icon = known
+                    if tab?.address?.host()?.lowercased() == host {
+                        tab?.icon = known
+                    }
                     self.busy.remove(host)
                     return
                 }
@@ -159,13 +184,43 @@ final class Favicons {
         missing.insert(host)
     }
 
+    /// The kinds of picture a site's icon may be. Anything else a site sends
+    /// — a PDF, a TIFF, an icns, PostScript — isn't opened at all: every
+    /// kind is one more decoder a site can reach in this process.
+    private static let kinds: Set<String> = [
+        "public.png", "com.microsoft.ico", "public.jpeg", "com.compuserve.gif", "org.webmproject.webp", "com.microsoft.bmp",
+    ]
+
     /// Decoded and drawn into a square off the main thread — an .ico can hold
-    /// a dozen sizes and take a moment to unpack.
+    /// a dozen sizes and take a moment to unpack. Only the kinds above, no
+    /// larger than 4096 pixels a side, and decoded straight to the small size
+    /// a tab needs.
     private static func square(_ data: Data) async -> NSImage? {
         await Task.detached(priority: .utility) { () -> NSImage? in
-            guard let image = NSImage(data: data), image.isValid,
-                  image.size.width > 0, image.size.height > 0
+            guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
+                  let kind = CGImageSourceGetType(source) as String?, Favicons.kinds.contains(kind)
             else { return nil }
+            // The frame nearest 64 pixels from above, for an .ico of many.
+            var best = 0, bestSide = 0
+            for index in 0..<min(CGImageSourceGetCount(source), 32) {
+                let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any]
+                let w = properties?[kCGImagePropertyPixelWidth] as? Int ?? 0
+                let h = properties?[kCGImagePropertyPixelHeight] as? Int ?? 0
+                guard w > 0, h > 0, w <= 4096, h <= 4096 else { continue }
+                let side = max(w, h)
+                if bestSide == 0 || (side >= 64 && (bestSide < 64 || side < bestSide)) || (bestSide < 64 && side > bestSide) {
+                    best = index
+                    bestSide = side
+                }
+            }
+            guard bestSide > 0,
+                  let decoded = CGImageSourceCreateThumbnailAtIndex(source, best, [
+                      kCGImageSourceCreateThumbnailFromImageAlways: true,
+                      kCGImageSourceThumbnailMaxPixelSize: 128,
+                      kCGImageSourceCreateThumbnailWithTransform: true,
+                  ] as CFDictionary)
+            else { return nil }
+            let image = NSImage(cgImage: decoded, size: NSSize(width: decoded.width, height: decoded.height))
             let side: CGFloat = 64
             let out = NSImage(size: NSSize(width: side, height: side))
             out.lockFocus()
@@ -190,8 +245,9 @@ final class Favicons {
               let png = rep.representation(using: .png, properties: [:])
         else { return }
         let file = Favicons.file(key)
+        let dir = folder
         DispatchQueue.global(qos: .utility).async {
-            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             try? png.write(to: file, options: .atomic)
         }
     }
@@ -202,7 +258,8 @@ final class Favicons {
     private static func rank(_ declared: [[String: String]], page: URL, dark: Bool) -> [URL] {
         var scored: [(URL, Int)] = []
         for entry in declared {
-            guard let href = entry["href"], let url = URL(string: href),
+            guard let href = entry["href"],
+                  let url = URL(string: href, relativeTo: page)?.absoluteURL,
                   url.scheme?.hasPrefix("http") == true
             else { continue }
             let rel = entry["rel"] ?? ""
