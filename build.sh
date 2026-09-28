@@ -148,9 +148,24 @@ IDENTITY="${SEARCH_SIGN_IDENTITY:-$(security find-identity -v -p codesigning 2>/
 # a restricted entitlement with no profile behind it is an app that won't open.
 ENTITLEMENTS="Search.entitlements"
 if [ -f "Search.provisionprofile" ]; then
-  cp "Search.provisionprofile" "$APP/Contents/embedded.provisionprofile"
-  ENTITLEMENTS="Search.passkeys.entitlements"
-  echo "passkeys: profile embedded"
+  # Only a profile that grants the entitlement, to the very app the passkeys
+  # entitlements name. One made before Apple said yes, or for another team or
+  # bundle, signed alongside them makes an app macOS refuses to launch at all.
+  PROFILE="$(mktemp)"
+  security cms -D -i "Search.provisionprofile" > "$PROFILE" 2>/dev/null || true
+  GRANTED="$(/usr/libexec/PlistBuddy -c "Print :Entitlements:com.apple.developer.web-browser.public-key-credential" "$PROFILE" 2>/dev/null || true)"
+  FOR="$(/usr/libexec/PlistBuddy -c "Print :Entitlements:com.apple.application-identifier" "$PROFILE" 2>/dev/null || true)"
+  WANTS="$(/usr/libexec/PlistBuddy -c "Print :com.apple.application-identifier" Search.passkeys.entitlements 2>/dev/null || true)"
+  rm -f "$PROFILE"
+  if [ "$GRANTED" = "true" ] && [ -n "$FOR" ] && [ "$FOR" = "$WANTS" ]; then
+    cp "Search.provisionprofile" "$APP/Contents/embedded.provisionprofile"
+    ENTITLEMENTS="Search.passkeys.entitlements"
+    echo "passkeys: profile embedded"
+  elif [ "$GRANTED" != "true" ]; then
+    echo "passkeys: Search.provisionprofile doesn't grant them yet — signed without it" >&2
+  else
+    echo "passkeys: Search.provisionprofile is for $FOR, the entitlements for $WANTS — signed without it" >&2
+  fi
 fi
 if [ -n "$IDENTITY" ]; then
   codesign --force --deep --timestamp --options runtime \
